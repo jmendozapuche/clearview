@@ -1,0 +1,13 @@
+# .NET
+bin/
+obj/
+# Python / ML
+__pycache__/
+.pytest_cache/
+*.pt
+runs/
+datasets/
+raw/
+ml/configs/datasets.yaml
+# Generated model files (large); regenerate with ml/scripts/export.py
+unity/Assets/ClearView/Model/*.onnx

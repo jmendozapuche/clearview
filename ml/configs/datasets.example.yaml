@@ -1,0 +1,73 @@
+# ClearView dataset recipe. Copy to datasets.yaml and point the sources at what you downloaded.
+# Every source must be in Ultralytics YOLO layout: <path>/images/..., <path>/labels/..., and either a
+# data.yaml with `names` or an inline `names:` list here.
+# CHECK EACH DATASET'S LICENSE before using it, especially for anything beyond personal research.
+
+output: datasets/clearview
+val_fraction: 0.1
+seed: 0
+
+# Final classes. The order is the class id. `category` drives the app:
+#   ad     -> may be hidden
+#   safety -> NEVER covered; a mask touching one of these is cancelled
+#   ignore -> detected but has no effect
+classes:
+  - { name: billboard,     category: ad }
+  - { name: poster,        category: ad }
+  - { name: logo,          category: ad }
+  - { name: ad_screen,     category: ad }
+  - { name: person,        category: safety }
+  - { name: bicycle,       category: safety }
+  - { name: car,           category: safety }
+  - { name: motorcycle,    category: safety }
+  - { name: bus,           category: safety }
+  - { name: truck,         category: safety }
+  - { name: traffic_light, category: safety }
+  - { name: stop_sign,     category: safety }
+  - { name: traffic_sign,  category: safety }
+
+sources:
+  # COCO (convert with Ultralytics' coco.yaml download). Gives the safety classes.
+  - name: coco
+    path: raw/coco
+    max_images: 30000
+    map:
+      person: person
+      bicycle: bicycle
+      car: car
+      motorcycle: motorcycle
+      bus: bus
+      truck: truck
+      traffic light: traffic_light
+      stop sign: stop_sign
+
+  # Any logo dataset converted to YOLO (e.g. LogoDet-3K, OpenLogo). Every brand becomes "logo".
+  # Run pseudo_label_safety.py on it first so people in these photos are labelled as safety.
+  - name: logos
+    path: raw/logos
+    map:
+      "*": logo
+      person: person
+      bicycle: bicycle
+      car: car
+      motorcycle: motorcycle
+      bus: bus
+      truck: truck
+      traffic light: traffic_light
+      stop sign: stop_sign
+
+  # Street advertising (billboards, posters, digital screens), e.g. your own Quest captures.
+  - name: street_ads
+    path: raw/street_ads
+    names: [billboard, poster, digital_screen, person]
+    map:
+      billboard: billboard
+      poster: poster
+      digital_screen: ad_screen
+      person: person
+
+  # Traffic signs (e.g. a GTSDB / Mapillary conversion). All sign types collapse to one safety class.
+  - name: signs
+    path: raw/traffic_signs
+    map:
+      "*": traffic_sign

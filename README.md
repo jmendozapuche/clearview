@@ -1,0 +1,102 @@
+# ClearView
+
+Prototipo para **Meta Quest 3 / 3S** que detecta publicidad en el mundo real (vallas, carteles,
+logos, pantallas publicitarias) y la **hace desaparecer** con un parche del color de su entorno, sin
+tapar nunca lo que importa para tu seguridad.
+
+> ⚠️ Prototipo de investigación. Úsalo en entornos controlados, no por la calle con tráfico.
+> Lee [docs/SAFETY.md](docs/SAFETY.md).
+
+## Cómo funciona
+
+```
+Cámara passthrough ──► YOLO (en el visor) ──► tracker ──► política de seguridad ──► parches anclados al mundo
+ (Passthrough Camera API)  anuncios + personas,     estabiliza    descarta lo dudoso      color del entorno,
+                           vehículos, señales       detecciones                           bordes suaves
+```
+
+1. **Captura:** se toma un frame de la cámara junto con la pose y la calibración de la cámara en ese instante.
+2. **Detección:** un YOLO11n corre en la GPU del Quest (Unity Inference Engine), unas pocas capas por
+   frame para no bajar los FPS. Detecta dos tipos de cosas: **anuncios** (candidatos a ocultar) y
+   **objetos de seguridad** (que nunca se tapan).
+3. **Tracking:** un anuncio tiene que verse varias veces seguidas antes de ocultarse.
+4. **Política de seguridad:** 14 reglas (no tapar personas, vehículos ni señales; nada cercano; nada
+   a ras de suelo; nada enorme; desactivar al girar la cabeza rápido...). Ver [SAFETY.md](docs/SAFETY.md).
+5. **Colocación:** se lanza un rayo desde la cámara contra la profundidad del entorno (Depth API / MRUK)
+   para encontrar la pared real. El parche se coloca sobre ella, incluso si la ves en ángulo.
+6. **Relleno:** el parche mezcla los colores que hay justo fuera de cada borde del anuncio y se funde
+   con bordes difuminados. Así parece pared vacía y no un bloque.
+
+## Estructura
+
+```
+unity/Assets/ClearView/
+  Core/      Lógica pura en C#, sin Unity: decodificador YOLO, tracker, reglas de seguridad,
+             guardia de movimiento, watchdog, muestreo de color. 100 % testeada.
+  Runtime/   Componentes de Unity: cámara, detector, proyección al mundo, render, controlador.
+  Shaders/   ClearView/SoftFill: relleno de 4 colores con bordes suaves, compatible con stereo instanced.
+tests/       Tests xUnit del Core (dotnet test).
+ml/          Pipeline de datos, entrenamiento y exportación del detector (Ultralytics YOLO).
+docs/        SAFETY.md (reglas) y SETUP_UNITY.md (montaje paso a paso).
+```
+
+## Puesta en marcha
+
+1. **Prueba rápida sin entrenar** (las TV y los monitores hacen de "anuncio"):
+   ```bash
+   pip install -r ml/requirements.txt
+   python ml/scripts/export.py --weights yolo11n.pt --coco-smoke-test
+   ```
+2. Monta la escena siguiendo [docs/SETUP_UNITY.md](docs/SETUP_UNITY.md) y haz *Build And Run* en el Quest.
+3. Pulsa **A/X** para activarlo y mira una TV a más de 2 m.
+
+## Entrenar el detector
+
+No existe un dataset público de "publicidad urbana" listo para usar, así que se combinan varios:
+
+| Qué aporta | Fuentes sugeridas (revisa su licencia) |
+|------------|----------------------------------------|
+| Personas, vehículos, semáforos | COCO |
+| Logos | LogoDet-3K, OpenLogo, FlickrLogos-32 |
+| Vallas, carteles, pantallas | Datasets de vallas publicitarias en Roboflow Universe y, sobre todo, **tus propias capturas del Quest** etiquetadas |
+| Señales de tráfico | GTSDB, Mapillary Traffic Signs |
+
+```bash
+cp ml/configs/datasets.example.yaml ml/configs/datasets.yaml   # edita las rutas de cada fuente
+
+# 1. Etiqueta personas y vehículos en los datasets de anuncios (ahí no vienen etiquetados)
+python ml/scripts/pseudo_label_safety.py --source raw/logos
+python ml/scripts/pseudo_label_safety.py --source raw/street_ads
+
+# 2. Une todo en un dataset con las clases de ClearView
+python ml/scripts/prepare_dataset.py --config ml/configs/datasets.yaml
+
+# 3. Entrena (necesita GPU)
+python ml/scripts/train.py --data datasets/clearview/data.yaml --epochs 100
+
+# 4. Exporta a ONNX y copia el modelo y las etiquetas a Unity
+python ml/scripts/export.py --weights runs/clearview/train/weights/best.pt --config ml/configs/datasets.yaml
+```
+
+**Por qué hace falta el paso 1:** si mezclas un dataset de logos donde salen personas sin etiquetar,
+el modelo aprende que "persona" es fondo y detecta peor justo lo que nunca hay que tapar.
+
+**Qué métrica mirar:** más que el mAP de los anuncios, el **recall de las clases de seguridad**. Un
+anuncio que no se detecta es una molestia; una persona que no se detecta puede acabar tapada.
+
+## Tests
+
+```bash
+dotnet test tests/ClearView.Core.Tests   # lógica de seguridad (C#)
+python -m pytest ml/tests                # pipeline de datos (Python)
+```
+
+## Estado y siguientes pasos
+
+- [x] Pipeline completo: cámara → detección → seguridad → parches anclados al mundo
+- [x] Reglas de seguridad con tests
+- [x] Pipeline de datos y entrenamiento, con modo de prueba COCO
+- [ ] Compilar y probar en un Quest 3 real (las APIs de Meta e Inference Engine no se han compilado contra los paquetes reales)
+- [ ] Dataset propio de publicidad urbana capturado con el Quest
+- [ ] Evaluación offline de seguridad: % de personas o señales que acabarían tapadas, con vídeos grabados
+- [ ] Relleno más realista (inpainting ligero) en lugar de la mezcla de 4 colores
