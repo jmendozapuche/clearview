@@ -483,6 +483,7 @@
       try {
         if (m.type === "init") {
           const gpu = m.gpuUrl && self.navigator && self.navigator.gpu;
+          let gpuNote = !m.gpuUrl ? "" : !gpu ? "este navegador no ofrece WebGPU" : "";
           importScripts(gpu ? m.gpuUrl : m.ortUrl);
           ort.env.wasm.wasmPaths = m.wasmBase;
           ort.env.wasm.numThreads = 1;
@@ -496,10 +497,11 @@
               backend = "webgpu";
             } catch (err) {
               session = null;
+              gpuNote = "WebGPU falló: " + String(err && err.message || err).slice(0, 80);
             }
           }
           if (!session) session = await ort.InferenceSession.create(m.model, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
-          postMessage({ type: "ready", backend });
+          postMessage({ type: "ready", backend, gpuNote });
         } else if (m.type === "run") {
           const t0 = performance.now();
           const input = new ort.Tensor("float32", m.data, [1, 3, m.h, m.w]);
@@ -554,7 +556,7 @@
     if (m.type === "ready") {
       ready = true;
       backend = m.backend === "webgpu" ? "GPU" : "CPU";
-      setStatus("ready", "Listo · " + backend);
+      setStatus("ready", "Listo · " + backend + (m.gpuNote ? " (" + m.gpuNote + ")" : ""));
       dirty = true;
     } else if (m.type === "result") {
       if (pending && pending.id === m.id) onResult(m.data, m.dims, m.ms);
