@@ -48,6 +48,43 @@ def fp16_weight_storage(src: Path, dst: Path) -> None:
     onnx.save(m, str(dst))
 
 
+def softmax_on_last_axis(path: Path) -> int:
+    """Rewrite every Softmax that is not on the last axis as Transpose -> Softmax(-1) -> Transpose.
+
+    Mathematically identical. Needed because onnxruntime-web 1.18's WebGPU backend only implements
+    Softmax on the last axis, and YOLO's DFL head uses axis 1. Returns the number of nodes rewritten.
+    """
+    import onnx
+    from onnx import helper, shape_inference
+
+    m = shape_inference.infer_shapes(onnx.load(str(path)))
+    ranks = {v.name: len(v.type.tensor_type.shape.dim)
+             for v in list(m.graph.value_info) + list(m.graph.input) + list(m.graph.output)}
+    new_nodes, count = [], 0
+    for n in m.graph.node:
+        axis = next((helper.get_attribute_value(a) for a in n.attribute if a.name == "axis"), -1)
+        rank = ranks.get(n.input[0])
+        if n.op_type != "Softmax" or rank is None or axis in (-1, rank - 1):
+            new_nodes.append(n)
+            continue
+        axis %= rank
+        perm = [i for i in range(rank) if i != axis] + [axis]
+        inv = [perm.index(i) for i in range(rank)]
+        t_in, t_sm = n.name + "_t_in", n.name + "_t_sm"
+        new_nodes += [
+            helper.make_node("Transpose", [n.input[0]], [t_in], perm=perm, name=n.name + "/pre_transpose"),
+            helper.make_node("Softmax", [t_in], [t_sm], axis=rank - 1, name=n.name),
+            helper.make_node("Transpose", [t_sm], [n.output[0]], perm=inv, name=n.name + "/post_transpose"),
+        ]
+        count += 1
+    del m.graph.node[:]
+    m.graph.node.extend(new_nodes)
+    del m.graph.value_info[:]  # drop inferred shapes; they are recomputed at load time
+    onnx.checker.check_model(m)
+    onnx.save(m, str(path))
+    return count
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--weights", default="yolov8s-worldv2.pt")
@@ -73,6 +110,7 @@ def main() -> None:
         final.write_bytes(onnx_path.read_bytes())
     else:
         fp16_weight_storage(onnx_path, final)
+    print(f"Softmax nodes moved to the last axis (WebGPU compatibility): {softmax_on_last_axis(final)}")
 
     labels = ["# index,name,category  (YOLO-World text prompts)"]
     labels += [f"{i},{n},{'ad' if n in AD_CLASSES else 'safety'}" for i, n in enumerate(classes)]
