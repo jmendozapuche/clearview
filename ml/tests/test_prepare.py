@@ -185,3 +185,28 @@ def test_normalize_keeps_names(tmp_path):
     (src / "labels" / "b.txt").write_text("1 0.5 0.5 0.1 0.1\n")
     (src / "data.yaml").write_text("names: {0: billboard, 1: person}\n")
     assert normalize(src, tmp_path / "out", None)["names"] == ["billboard", "person"]
+
+
+def test_merge_boxes_understands_polygons():
+    existing = ["2 0.4 0.3 0.6 0.3 0.6 0.7 0.4 0.7"]          # polygon of a box centred at 0.5,0.5
+    assert merge_boxes(existing, [(2, [0.5, 0.5, 0.2, 0.4])], {}) == []
+
+
+# ---------- boxes_to_segments (pure parts) ----------
+from boxes_to_segments import mask_to_polygon, rect_polygon  # noqa: E402
+
+
+def test_rect_polygon():
+    assert rect_polygon(0.5, 0.5, 0.2, 0.4) == pytest.approx([0.4, 0.3, 0.6, 0.3, 0.6, 0.7, 0.4, 0.7])
+
+
+def test_mask_to_polygon_clips_to_box_and_rejects_empty():
+    import numpy as np
+    m = np.zeros((100, 200), bool)
+    m[20:60, 40:120] = True           # object
+    m[0:100, 150:200] = True          # leak outside the box: must be ignored
+    poly = mask_to_polygon(m, [30, 10, 130, 70], 200, 100)
+    xs, ys = poly[0::2], poly[1::2]
+    assert min(xs) == pytest.approx(0.2, abs=0.01) and max(xs) == pytest.approx(0.595, abs=0.01)
+    assert min(ys) == pytest.approx(0.2, abs=0.01) and max(ys) == pytest.approx(0.59, abs=0.01)
+    assert mask_to_polygon(np.zeros((100, 200), bool), [30, 10, 130, 70], 200, 100) is None

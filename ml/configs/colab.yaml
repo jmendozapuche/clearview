@@ -7,6 +7,7 @@ classes:
   - { name: billboard,     category: ad }
   - { name: poster,        category: ad }
   - { name: logo,          category: ad }
+  - { name: ad_screen,     category: ad }
   - { name: person,        category: safety }
   - { name: wheelchair,    category: safety }
   - { name: bicycle,       category: safety }
@@ -33,10 +34,12 @@ sources:
     map: { logo: logo, person: person, bicycle: bicycle, car: car, motorcycle: motorcycle, bus: bus,
            truck: truck, traffic light: traffic_light, stop sign: stop_sign }
 
-  # Your own photos, labelled in YOLO format with these same class names (optional).
+  # Your own photos from web/etiquetar.html (polygons), after pseudo_label_safety (optional).
   - name: mine
     path: raw/mine
     optional: true
-    map: { billboard: billboard, poster: poster, logo: logo, person: person, wheelchair: wheelchair,
+    keep_images_without_boxes: true
+    map: { billboard: billboard, poster: poster, logo: logo, ad_screen: ad_screen, person: person, wheelchair: wheelchair,
            bicycle: bicycle, car: car, motorcycle: motorcycle, bus: bus, truck: truck,
-           traffic_light: traffic_light, stop_sign: stop_sign, traffic_sign: traffic_sign }
+           traffic_light: traffic_light, stop_sign: stop_sign, traffic_sign: traffic_sign,
+           traffic light: traffic_light, stop sign: stop_sign }

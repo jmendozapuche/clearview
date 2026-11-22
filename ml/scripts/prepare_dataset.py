@@ -38,7 +38,8 @@ def remap_label_lines(lines: list[str], id_map: dict[int, int]) -> list[str]:
         cls = int(float(parts[0]))
         if cls not in id_map:
             continue
-        out.append(" ".join([str(id_map[cls])] + parts[1:5]))
+        # Keep every coordinate: 4 for a box, or a full polygon (segmentation labels).
+        out.append(" ".join([str(id_map[cls])] + parts[1:]))
     return out
 
 

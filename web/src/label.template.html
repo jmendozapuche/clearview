@@ -1,0 +1,118 @@
+<title>ClearView Etiquetas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  /* Same visual language as the viewer: dark single theme, thumb-reachable controls. */
+  :root {
+    --bg: #101318; --panel: #181c23; --line: #29303b; --fg: #e9edf2; --muted: #9aa5b4;
+    --accent: #86bdff; --accent-ink: #0b1626; --danger: #ff7b72;
+    --c-billboard: #e57ae8; --c-poster: #f3b84b; --c-logo: #7fd1ff; --c-ad_screen: #9ef07a;
+    --font-ui: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); }
+  body { font-family: var(--font-ui); font-size: 15px; line-height: 1.5;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px 40px; }
+  .wrap { max-width: 900px; margin: 0 auto; display: grid; gap: 14px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; }
+  h1 span { color: var(--muted); font-weight: 500; }
+  a { color: var(--accent); }
+  p { margin: 0; max-width: 65ch; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 8px 16px;
+    border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+    font: 700 0.95rem var(--font-ui); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.danger { color: var(--danger); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn:focus-visible, .chip:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .stats { font: 500 0.9rem var(--font-data); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .thumb { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #000;
+    aspect-ratio: 3 / 4; cursor: pointer; padding: 0; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb .n { position: absolute; left: 6px; bottom: 6px; font: 600 0.78rem var(--font-ui); background: rgba(10,13,17,0.82);
+    border-radius: 999px; padding: 2px 8px; }
+  .thumb .n.zero { color: var(--muted); }
+  .empty { border: 1px dashed var(--line); border-radius: 12px; padding: 22px; color: var(--muted); text-align: center; }
+  ol.steps { margin: 0; padding-left: 20px; color: var(--muted); font-size: 0.9rem; display: grid; gap: 4px; max-width: 65ch; }
+  ol.steps b { color: var(--fg); font-weight: 600; }
+
+  /* Editor */
+  .editor { position: fixed; inset: 0; z-index: 30; background: #000; display: flex; flex-direction: column; }
+  .ed-top, .ed-bottom { background: rgba(16,19,24,0.96); display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    padding: 8px max(10px, env(safe-area-inset-left, 0px)); }
+  .ed-top { padding-top: calc(env(safe-area-inset-top, 0px) + 8px); }
+  .ed-bottom { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+  .ed-canvas-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #ed-canvas { max-width: 100%; max-height: 100%; touch-action: none; display: block; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: transparent; color: var(--fg); font: 600 0.85rem var(--font-ui); cursor: pointer; }
+  .chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  /* Fixed heights: the photo must never move under the finger when the hint or buttons change. */
+  .hint { flex: 1 1 100%; font-size: 0.82rem; color: var(--muted); min-height: 3em; margin: 0; }
+  .ed-bottom .btn { min-height: 48px; }
+  .invisible { visibility: hidden; }
+  .spacer { flex: 1; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>ClearView <span>etiquetas</span></h1>
+    <a href="./">Volver al visor</a>
+  </header>
+
+  <p>Fotografía calles con publicidad y marca cada anuncio. Con estas fotos, el cuaderno de Colab entrena un
+    modelo que reconoce los anuncios de tu zona con su forma exacta.</p>
+  <ol class="steps">
+    <li><b>Añade fotos</b> de calles, tiendas y paradas: cuantas más situaciones distintas, mejor (de día, de noche, de cerca, de lejos).</li>
+    <li><b>Toca una foto</b> y marca cada anuncio tocando sus <b>4 esquinas</b>. Para formas raras usa «Contorno libre».</li>
+    <li><b>No marques personas ni vehículos:</b> se etiquetan solos al entrenar.</li>
+    <li><b>Exporta el zip</b> y súbelo en el paso 4 del cuaderno («zip» en tus fotos).</li>
+  </ol>
+
+  <div class="row">
+    <label class="btn primary" for="add">Añadir fotos</label>
+    <input type="file" id="add" accept="image/*" multiple>
+    <button class="btn" id="export" type="button" disabled>Exportar zip</button>
+    <span class="stats" id="stats">0 fotos · 0 anuncios</span>
+  </div>
+  <p class="muted" id="msg" role="status" aria-live="polite"></p>
+
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty">Todavía no hay fotos. Las fotos se guardan solo en este navegador hasta que exportes el zip.</div>
+</div>
+
+<div class="editor" id="editor" hidden>
+  <div class="ed-top">
+    <button class="chip" type="button" data-cls="billboard" aria-pressed="true"><i style="background: var(--c-billboard)"></i>Valla</button>
+    <button class="chip" type="button" data-cls="poster" aria-pressed="false"><i style="background: var(--c-poster)"></i>Cartel</button>
+    <button class="chip" type="button" data-cls="logo" aria-pressed="false"><i style="background: var(--c-logo)"></i>Logo</button>
+    <button class="chip" type="button" data-cls="ad_screen" aria-pressed="false"><i style="background: var(--c-ad_screen)"></i>Pantalla</button>
+    <span class="spacer"></span>
+    <button class="chip" type="button" id="mode" aria-pressed="false">Contorno libre</button>
+    <p class="hint" id="hint">Toca las 4 esquinas del anuncio.</p>
+  </div>
+  <div class="ed-canvas-wrap"><canvas id="ed-canvas" aria-label="Foto para etiquetar"></canvas></div>
+  <div class="ed-bottom">
+    <button class="btn" type="button" id="undo">Deshacer</button>
+    <button class="btn invisible" type="button" id="close-poly">Cerrar contorno</button>
+    <button class="btn danger" type="button" id="del-poly" disabled>Borrar anuncio</button>
+    <span class="spacer"></span>
+    <button class="btn danger" type="button" id="del-photo">Borrar foto</button>
+    <button class="btn primary" type="button" id="done">Listo</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+/*__LABEL__*/
+</script>

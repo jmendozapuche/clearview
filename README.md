@@ -43,6 +43,14 @@ docs/        SAFETY.md (reglas) y SETUP_UNITY.md (montaje paso a paso).
 
 ## Probar en el móvil (sin visor)
 
+Versión alojada (cámara en vivo, GPU): **https://jmendozapuche.github.io/clearview/**
+
+- **Estilo:** «Panel en blanco» (anuncio sustituido por un panel mate iluminado como la escena) o «Fundir con la pared».
+- **Personas delante de un anuncio:** se recortan del panel y siguen visibles.
+- **Con un modelo de segmentación**, los paneles siguen la forma exacta del anuncio.
+- **«Etiquetar mis fotos»** (`etiquetar.html`): fotografía calles, marca cada anuncio tocando sus 4 esquinas
+  (o su contorno) y exporta un zip para el cuaderno de Colab. Las fotos se guardan solo en tu navegador.
+
 `web/` es una versión web que usa el mismo tracker y las mismas reglas de seguridad (portadas a
 JavaScript y testeadas contra los valores de C#). Haces una foto o grabas un vídeo con el móvil y la
 publicidad desaparece. Usa un detector sin entrenar (YOLO-World guiado por texto: "billboard",
@@ -89,7 +97,8 @@ python ml/scripts/voc_to_yolo.py --src raw/LogoDet-3K --out raw/logos --single-c
 python ml/scripts/pseudo_label_safety.py --source raw/logos
 python ml/scripts/pseudo_label_safety.py --source raw/openimages
 python ml/scripts/prepare_dataset.py --config ml/configs/colab.yaml
-python ml/scripts/train.py --data datasets/clearview/data.yaml --batch -1 --device 0 --resume
+python ml/scripts/boxes_to_segments.py --data datasets/clearview          # cajas -> contornos con SAM
+python ml/scripts/train.py --data datasets/clearview/data.yaml --model yolo11n-seg.pt --batch -1 --device 0 --resume
 python ml/scripts/eval_safety.py --weights runs/clearview/train/weights/best.pt \
     --data datasets/clearview/data.yaml --config ml/configs/colab.yaml
 python ml/scripts/export.py --weights runs/clearview/train/weights/best.pt --config ml/configs/colab.yaml \
@@ -123,6 +132,10 @@ node --test web/test/core.test.js        # port a JS de la lógica de seguridad
 - [x] Reglas de seguridad con tests
 - [x] Pipeline de datos y entrenamiento, con modo de prueba COCO
 - [x] Demo web para el móvil con detector sin entrenar (YOLO-World)
+- [x] Estilo panel en blanco, recorte de personas, máscaras de segmentación en la web
+- [x] Herramienta de etiquetado en la web y entrenamiento de segmentación en Colab
+- [ ] Entrenar el modelo de segmentación con fotos propias
+- [ ] Máscaras de segmentación también en Unity (hoy el Quest usa las cajas del modelo)
 - [ ] Compilar y probar en un Quest 3 real (las APIs de Meta e Inference Engine no se han compilado contra los paquetes reales)
 - [ ] Dataset propio de publicidad urbana capturado con el Quest
 - [ ] Evaluación offline de seguridad: % de personas o señales que acabarían tapadas, con vídeos grabados

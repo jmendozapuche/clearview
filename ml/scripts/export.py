@@ -83,10 +83,13 @@ def main() -> None:
         import onnxruntime as ort
         import numpy as np
         sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-        out = sess.run(None, {sess.get_inputs()[0].name: np.zeros((1, 3, args.height, args.width), np.float32)})[0]
-        if out.ndim != 3 or out.shape[1] != 4 + n_classes:
-            raise SystemExit(f"Unexpected output shape {out.shape}; expected (1, {4 + n_classes}, anchors)")
-        print(f"ONNX check OK: output {out.shape}")
+        outs = sess.run(None, {sess.get_inputs()[0].name: np.zeros((1, 3, args.height, args.width), np.float32)})
+        out = outs[0]
+        # Segmentation models add 32 mask coefficients per anchor and a second output with the prototypes.
+        n_mask = outs[1].shape[1] if len(outs) > 1 else 0
+        if out.ndim != 3 or out.shape[1] != 4 + n_classes + n_mask:
+            raise SystemExit(f"Unexpected output shape {out.shape}; expected (1, {4 + n_classes + n_mask}, anchors)")
+        print(f"ONNX check OK: output {out.shape}" + (f", mask prototypes {outs[1].shape}" if n_mask else ""))
     except ImportError:
         print("onnxruntime not installed; skipping output-shape check")
 

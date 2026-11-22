@@ -18,6 +18,7 @@ Los valores por defecto son conservadores y se pueden ajustar en el Inspector de
 |---|-------|-------------|-------|
 | R1 | Si no llegan detecciones nuevas durante 1 s, se retiran todos los parches | 1.0 s | `FailSafe` |
 | R2 | **Nunca se tapa un objeto de seguridad** (personas, bicis, coches, motos, buses, camiones, semáforos, señales). Si el parche toca la zona de uno, ampliada con un margen, se cancela entero | margen 10 % del objeto, mínimo 2 % de la imagen | `SafetyPolicy` |
+| R2-web | En la web del móvil (`cutOutSafety`), un anuncio que toca a una persona, vehículo o señal **sí** se tapa, pero el objeto se **recorta del panel** y queda por delante: con su silueta ampliada si el modelo da máscaras, o con su caja más el margen si no. Se ve como tu imagen de referencia y la persona nunca queda cubierta | máscara ampliada ~12 % o caja + margen | `core.js` + `app.js` |
 | R2b | Los objetos de seguridad se aceptan con menos confianza que los anuncios: preferimos falsos positivos de "persona" | 0.20 frente a 0.45 | `DecoderConfig` |
 | R3 | El parche cubre solo el interior del anuncio: el contorno físico (marco, poste, borde del cartel) sigue visible | 6 % por lado | `SafetyPolicy` |
 | R4 | Un parche no puede ocupar más del 12 % de la imagen, y todos juntos no más del 25 %. Un anuncio enorme suele significar que está muy cerca | 12 % / 25 % | `SafetyPolicy` |

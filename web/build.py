@@ -62,7 +62,12 @@ def main() -> None:
     html = html.replace("/*__CORE__*/", (WEB / "src" / "core.js").read_text(encoding="utf-8"))
     html = html.replace("/*__APP__*/", (WEB / "src" / "app.js").read_text(encoding="utf-8"))
     if args.standalone:
+        # Self-hosted only: the labelling tool exports a zip, and Claude artifacts block downloads.
+        html = html.replace('id="label-link" hidden', 'id="label-link"')
         html = (SKELETON_HEAD + html + "</body></html>\n")
+        label = (WEB / "src" / "label.template.html").read_text(encoding="utf-8")
+        label = label.replace("/*__LABEL__*/", (WEB / "src" / "label.js").read_text(encoding="utf-8"))
+        (out / "etiquetar.html").write_text(SKELETON_HEAD + label + "</body></html>\n", encoding="utf-8")
     (out / "index.html").write_text(html, encoding="utf-8")
 
     # Chunks are published with a .wasm name: artifact hosting only serves known web types, and

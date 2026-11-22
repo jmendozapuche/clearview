@@ -183,7 +183,11 @@ namespace ClearView
         private void ProcessResult(float[] output, int channels, int anchors, double now)
         {
             _lastInferenceMs = (float)((now - _jobStart) * 1000.0);
-            int numClasses = channels - 4;
+            // Take the class count from the labels, not from the tensor: segmentation models append 32 mask
+            // coefficients per anchor after the class scores. The decoder only reads boxes and scores.
+            int numClasses = _labels.Count;
+            if (channels < 4 + numClasses)
+                throw new InvalidOperationException($"Model output has {channels} channels but the labels list {numClasses} classes");
             List<Detection> detections = YoloDecoder.Decode(output, numClasses, anchors, inputWidth, inputHeight, _labels, decoder);
 
             _ads.Clear();

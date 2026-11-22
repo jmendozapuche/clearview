@@ -35,8 +35,12 @@ def merge_boxes(existing: list[str], new: list[tuple[int, list[float]]], same: d
     old = []
     for line in existing:
         p = line.split()
-        if len(p) >= 5:
+        if len(p) == 5:
             old.append((int(float(p[0])), [float(v) for v in p[1:5]]))
+        elif len(p) >= 7:  # polygon "cls x1 y1 x2 y2 ...": compare using its bounding box
+            xs, ys = [float(v) for v in p[1::2]], [float(v) for v in p[2::2]]
+            old.append((int(float(p[0])), [(min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2,
+                                           max(xs) - min(xs), max(ys) - min(ys)]))
     added = []
     for cls, xywh in new:
         if any(o_cls in same.get(cls, {cls}) and iou_xywh(o, xywh) > iou_threshold for o_cls, o in old):
