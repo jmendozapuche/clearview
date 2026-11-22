@@ -69,8 +69,13 @@ def main() -> None:
     for name in manifest["chunks"]:
         shutil.copy2(model_dir / name, out / "model" / (name + ".wasm"))
         served.append(name + ".wasm")
+    # Version = hash of the model bytes, used by the page to bypass stale browser/CDN caches.
+    import hashlib
+    h = hashlib.sha256()
+    for name in manifest["chunks"]:
+        h.update((model_dir / name).read_bytes())
     (out / "model" / "manifest.json").write_text(
-        json.dumps({**manifest, "chunks": served, "webgpu": args.webgpu}, indent=2))
+        json.dumps({**manifest, "chunks": served, "webgpu": args.webgpu, "version": h.hexdigest()[:12]}, indent=2))
     for name in WASM_FILES + (["ort-wasm-simd.jsep.wasm"] if args.webgpu else []):
         shutil.copy2(ort_dist() / name, out / "ort" / name)
     shutil.copy2(WEB / "assets" / "sample.jpg", out / "sample.jpg")
