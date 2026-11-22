@@ -1,0 +1,962 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>ClearView Móvil</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  /* Layout: one column, phone first: viewfinder on top, actions under the thumb, results below.
+     Deliberately single dark theme: it is a camera viewfinder. */
+  :root {
+    --bg: #101318;
+    --panel: #181c23;
+    --line: #29303b;
+    --fg: #e9edf2;
+    --muted: #9aa5b4;
+    --accent: #86bdff;
+    --accent-ink: #0b1626;
+    --hide: #e57ae8;   /* ad hidden */
+    --safe: #52d58f;   /* protected: people, vehicles, signs */
+    --warn: #f3b84b;   /* ad left visible by a rule */
+    --danger: #ff7b72;
+    --font-ui: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    --radius: 14px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); }
+  body {
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.5;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 14px 40px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 { margin: 0; font-size: 1.55rem; font-weight: 800; letter-spacing: -0.03em; }
+  .brand h1 span { color: var(--muted); font-weight: 500; letter-spacing: -0.01em; }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 0.8rem; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px 4px 9px;
+    max-width: 100%;
+  }
+  .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+  .status[data-kind="ready"]::before { background: var(--safe); }
+  .status[data-kind="error"]::before { background: var(--danger); }
+  .status[data-kind="error"] { color: var(--danger); }
+
+  .viewer { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; border: 1px solid var(--line); }
+  #stage { display: block; width: 100%; height: auto; max-width: 100%; min-height: 180px; touch-action: manipulation; }
+  .stage-msg {
+    position: absolute; inset: auto 10px 10px 10px;
+    background: rgba(10, 13, 17, 0.82); backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 12px; font-size: 0.85rem; font-weight: 600;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* Live camera: full-screen viewfinder with controls under the thumb. */
+  body.live { overflow: hidden; }
+  body.live .viewer {
+    position: fixed; inset: 0; z-index: 20; border: 0; border-radius: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  body.live #stage { width: 100%; height: 100%; object-fit: contain; min-height: 0; }
+  .live-ui { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) max(12px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 16px) max(12px, env(safe-area-inset-left, 0px)); }
+  .live-state {
+    align-self: flex-start; pointer-events: auto;
+    display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+    background: rgba(10, 13, 17, 0.78); backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px 6px 10px;
+    font-size: 0.85rem; font-weight: 600;
+  }
+  .live-state::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .live-state[data-kind="on"]::before { background: var(--safe); }
+  .live-state[data-kind="pause"]::before, .live-state[data-kind="wait"]::before { background: var(--warn); }
+  .live-bar { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: stretch; pointer-events: auto; }
+  .lbtn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 56px; padding: 8px 14px; border-radius: 14px;
+    background: rgba(24, 28, 35, 0.86); backdrop-filter: blur(6px); color: var(--fg);
+    border: 1px solid var(--line); font: 700 0.92rem var(--font-ui); cursor: pointer;
+  }
+  .lbtn input { accent-color: var(--accent); width: 18px; height: 18px; margin: 0; }
+  .lbtn.main { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-size: 1.02rem; }
+  .lbtn.main[aria-pressed="true"] { background: var(--panel); color: var(--fg); border-color: var(--line); }
+  .lbtn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .credit { font-size: 0.72rem; color: var(--muted); margin: 0; }
+  .credit a { color: var(--muted); }
+
+  .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    min-height: 62px; padding: 8px 6px;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 12px;
+    font: 700 0.98rem var(--font-ui); cursor: pointer; text-align: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn small { font-weight: 500; font-size: 0.72rem; color: var(--muted); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.primary small { color: var(--accent-ink); opacity: 0.75; }
+  .btn:focus-visible, .chip:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .btn:active { transform: translateY(1px); }
+  input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    min-height: 40px; padding: 6px 12px;
+    border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--fg);
+    font: 600 0.85rem var(--font-ui); cursor: pointer; user-select: none; -webkit-user-select: none;
+  }
+  .chip input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+  .chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  select { font: 600 0.85rem var(--font-ui); background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-height: 36px; }
+  .notice { margin: 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 14%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); font-size: 0.88rem; }
+
+  .summary { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .stat { display: grid; gap: 2px; min-width: 0; }
+  .stat b { font: 500 1.45rem var(--font-data); font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat span { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  .stat.hide b { color: var(--hide); } .stat.kept b { color: var(--warn); } .stat.safe b { color: var(--safe); }
+  .summary ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 0.88rem; }
+  .summary p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+  .summary p strong { color: var(--fg); font-weight: 600; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid; margin-right: 6px; vertical-align: -1px; }
+
+  details { border-top: 1px solid var(--line); padding-top: 12px; }
+  summary { cursor: pointer; font-weight: 700; font-size: 0.95rem; list-style-position: inside; }
+  details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.88rem; color: var(--muted); max-width: 65ch; }
+  details ol b { color: var(--fg); font-weight: 600; }
+  .na { color: var(--warn); font-weight: 600; }
+  .fine { font-size: 0.8rem; color: var(--muted); margin: 0; max-width: 65ch; }
+
+  @media (max-width: 420px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .btn { font-size: 0.92rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="brand"><h1>ClearView <span>móvil</span></h1></div>
+    <div class="status" id="status" data-kind="loading" role="status" aria-live="polite"><span id="status-text">Preparando el detector…</span></div>
+  </header>
+
+  <div class="viewer">
+    <canvas id="stage" width="1280" height="853" aria-label="Imagen con la publicidad oculta"></canvas>
+    <div class="stage-msg" id="stage-msg"><div class="spinner" aria-hidden="true"></div><span id="stage-msg-text">Preparando el detector…</span></div>
+    <div class="live-ui" id="live-ui" hidden>
+      <div class="live-state" id="live-state" data-kind="off" role="status" aria-live="polite">Desactivado: ves la cámara tal cual</div>
+      <div class="live-bar">
+        <button class="lbtn" id="live-exit" type="button">Salir</button>
+        <button class="lbtn main" id="live-toggle" type="button" aria-pressed="false">Activar ClearView</button>
+        <label class="lbtn" for="live-debug"><input type="checkbox" id="live-debug"> Ver</label>
+      </div>
+    </div>
+    <video id="video" playsinline muted hidden></video>
+  </div>
+  <p class="credit" id="credit">Ejemplo: Times Square, foto de Terabass (CC BY-SA 3.0, Wikimedia Commons).</p>
+
+  <div class="actions">
+    <label class="btn primary" for="in-photo">Foto<small>hacer o elegir</small></label>
+    <label class="btn" for="in-video">Vídeo<small>grabar o elegir</small></label>
+    <button class="btn" id="btn-live" type="button">En vivo<small>cámara del móvil</small></button>
+  </div>
+  <input type="file" id="in-photo" accept="image/*">
+  <input type="file" id="in-video" accept="video/*">
+
+  <div class="tools">
+    <button class="chip" id="btn-compare" type="button" aria-pressed="false">Ver el original</button>
+    <label class="chip" for="debug"><input type="checkbox" id="debug"> Ver detecciones</label>
+    <span id="speed-wrap" hidden><label class="chip" for="speed">Velocidad
+      <select id="speed"><option value="1">1×</option><option value="0.5" selected>0,5×</option><option value="0.25">0,25×</option></select></label></span>
+    <button class="chip" id="btn-sample" type="button">Volver al ejemplo</button>
+  </div>
+  <p class="notice" id="notice" hidden></p>
+
+  <section class="summary" id="summary" hidden aria-label="Resultado">
+    <div class="stats">
+      <div class="stat hide"><b id="sum-hidden">0</b><span>ocultados</span></div>
+      <div class="stat kept"><b id="sum-kept">0</b><span>dejados visibles</span></div>
+      <div class="stat safe"><b id="sum-safe">0</b><span>protegidos</span></div>
+      <div class="stat"><b id="sum-ms">0</b><span>ms por análisis</span></div>
+    </div>
+    <ul id="reasons"></ul>
+    <p><strong>Protegidos:</strong> <span id="safe-list">ninguno</span></p>
+    <div class="legend" aria-label="Leyenda de «Ver detecciones»">
+      <span><i style="border-color: var(--hide)"></i>anuncio oculto</span>
+      <span><i style="border-color: var(--warn)"></i>anuncio que una regla deja visible</span>
+      <span><i style="border-color: var(--safe)"></i>persona, vehículo o señal</span>
+    </div>
+
+    <details>
+      <summary>Reglas de seguridad en esta prueba</summary>
+      <ol>
+        <li><b>Nunca tapa personas, vehículos ni señales.</b> Si el parche las toca, aunque sea con un margen, el anuncio se queda visible.</li>
+        <li><b>Solo el interior del anuncio.</b> El marco y el poste se siguen viendo.</li>
+        <li><b>Nada enorme ni a ras de suelo.</b> Un anuncio que ocupa mucho suele estar cerca; uno abajo puede ser un obstáculo.</li>
+        <li><b>Nunca opaco del todo</b> (90 %): si algo se clasifica mal, se intuye detrás.</li>
+        <li><b>En vídeo, confirmación y caducidad.</b> Un anuncio se oculta tras verse 3 veces, y todo se retira si el detector deja de responder.</li>
+        <li><b>Giro rápido</b> (solo «En vivo», si hay sensor): los parches desaparecen al instante.</li>
+        <li><b>En vivo arranca desactivado</b> y un indicador dice siempre si estás viendo la realidad alterada.</li>
+        <li><span class="na">No disponible en el móvil:</span> la regla de no tapar nada a menos de 2 m necesita el sensor de profundidad del Quest.</li>
+      </ol>
+    </details>
+    <p class="fine">Detector de prueba sin entrenar (YOLO-World guiado por texto): falla con logos pequeños y a veces confunde fotos de personas dentro de un anuncio con personas reales; entonces deja ese anuncio visible. Todo se procesa en tu móvil: las imágenes no salen del dispositivo.</p>
+  </section>
+</div>
+
+<script>
+// ClearView core for the browser: a line-by-line port of unity/Assets/ClearView/Core (C#).
+// Boxes are normalized, origin top-left, y down: {x, y, w, h}.
+// Keep the defaults identical to the C# SafetyConfig / TrackerConfig / DecoderConfig.
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.ClearViewCore = api;
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  // ---------- RectN ----------
+  const rect = (x, y, w, h) => ({ x, y, w: Math.max(0, w), h: Math.max(0, h) });
+  const right = (r) => r.x + r.w;
+  const bottom = (r) => r.y + r.h;
+  const area = (r) => r.w * r.h;
+  function intersectionArea(a, b) {
+    const w = Math.min(right(a), right(b)) - Math.max(a.x, b.x);
+    const h = Math.min(bottom(a), bottom(b)) - Math.max(a.y, b.y);
+    return w <= 0 || h <= 0 ? 0 : w * h;
+  }
+  function iou(a, b) {
+    const inter = intersectionArea(a, b);
+    const union = area(a) + area(b) - inter;
+    return union <= 0 ? 0 : inter / union;
+  }
+  const inset = (r, f) => rect(r.x + r.w * f, r.y + r.h * f, r.w - 2 * r.w * f, r.h - 2 * r.h * f);
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  function clampToUnit(r) {
+    const x0 = clamp01(r.x), y0 = clamp01(r.y), x1 = clamp01(right(r)), y1 = clamp01(bottom(r));
+    return rect(x0, y0, x1 - x0, y1 - y0);
+  }
+  const lerpRect = (a, b, t) => rect(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.w + (b.w - a.w) * t, a.h + (b.h - a.h) * t);
+
+  // ---------- Configs (same defaults as C#) ----------
+  const defaults = () => ({
+    decoder: { adScoreThreshold: 0.45, safetyScoreThreshold: 0.2, nmsIoU: 0.45, maxDetections: 100 },
+    tracker: { matchIoU: 0.3, minHitsToConfirm: 3, maxMisses: 2, maxAgeSeconds: 1.0, boxSmoothing: 0.5 },
+    safety: {
+      insetFraction: 0.06, safetyMargin: 0.1, safetyMarginMin: 0.02,
+      maxSingleMaskArea: 0.12, maxTotalMaskArea: 0.25, groundGuardY: 0.8,
+      minDistanceMeters: 2.0, maxOpacity: 0.9,
+    },
+    motion: { angularSoftDegPerSec: 60, angularHardDegPerSec: 120, recoverPerSecond: 1.5 },
+    failSafe: { resultTimeoutSeconds: 1.0 },
+  });
+
+  // ---------- YOLO decoder: output [1, 4+nc, anchors] ----------
+  function decode(output, numClasses, numAnchors, inputW, inputH, categories, cfg) {
+    if (categories.length !== numClasses) throw new Error(`labels ${categories.length} != model classes ${numClasses}`);
+    if (output.length < (4 + numClasses) * numAnchors) throw new Error("output too short");
+    const cand = [];
+    for (let a = 0; a < numAnchors; a++) {
+      let best = -1, bestScore = 0;
+      for (let c = 0; c < numClasses; c++) {
+        const s = output[(4 + c) * numAnchors + a];
+        if (s > bestScore) { bestScore = s; best = c; }
+      }
+      if (best < 0) continue;
+      const cat = categories[best];
+      const th = cat === "safety" ? cfg.safetyScoreThreshold : cfg.adScoreThreshold;
+      if (bestScore < th) continue;
+      const cx = output[a] / inputW, cy = output[numAnchors + a] / inputH;
+      const w = output[2 * numAnchors + a] / inputW, h = output[3 * numAnchors + a] / inputH;
+      const box = clampToUnit(rect(cx - w / 2, cy - h / 2, w, h));
+      if (area(box) <= 0) continue;
+      cand.push({ box, classId: best, score: bestScore, category: cat });
+    }
+    cand.sort((p, q) => q.score - p.score);
+    const kept = [];
+    for (const d of cand) {
+      if (kept.length >= cfg.maxDetections) break;
+      if (!kept.some((k) => k.classId === d.classId && iou(k.box, d.box) > cfg.nmsIoU)) kept.push(d);
+    }
+    return kept;
+  }
+
+  // ---------- Tracker ----------
+  class AdTracker {
+    constructor(cfg) { this.cfg = cfg; this.tracks = []; this.nextId = 1; }
+    clear() { this.tracks = []; }
+    update(ads, now) {
+      const pairs = [];
+      this.tracks.forEach((t, ti) => ads.forEach((d, di) => {
+        const v = iou(t.box, d.box);
+        if (v >= this.cfg.matchIoU) pairs.push([v, ti, di]);
+      }));
+      pairs.sort((p, q) => q[0] - p[0]);
+      const tUsed = new Array(this.tracks.length).fill(false);
+      const dUsed = new Array(ads.length).fill(false);
+      for (const [, ti, di] of pairs) {
+        if (tUsed[ti] || dUsed[di]) continue;
+        tUsed[ti] = dUsed[di] = true;
+        const t = this.tracks[ti], d = ads[di];
+        t.box = lerpRect(t.box, d.box, this.cfg.boxSmoothing);
+        t.score = d.score; t.classId = d.classId; t.hits++; t.misses = 0; t.lastSeen = now;
+      }
+      for (let i = this.tracks.length - 1; i >= 0; i--) {
+        if (tUsed[i]) continue;
+        const t = this.tracks[i];
+        t.misses++;
+        if (t.misses > this.cfg.maxMisses || now - t.lastSeen > this.cfg.maxAgeSeconds) this.tracks.splice(i, 1);
+      }
+      ads.forEach((d, di) => {
+        if (!dUsed[di]) this.tracks.push({ id: this.nextId++, box: d.box, classId: d.classId, score: d.score, hits: 1, misses: 0, lastSeen: now });
+      });
+    }
+  }
+
+  // ---------- Safety policy ----------
+  const SKIP = {
+    Unconfirmed: "unconfirmed", Stale: "stale", SafetyOverlap: "safetyOverlap",
+    TooLarge: "tooLarge", GroundLevel: "groundLevel", AreaBudget: "areaBudget",
+  };
+
+  function overlapsSafety(mask, safetyObjects, s) {
+    for (const o of safetyObjects) {
+      if (o.category !== "safety") continue;
+      const b = o.box;
+      const mx = Math.max(b.w * s.safetyMargin, s.safetyMarginMin);
+      const my = Math.max(b.h * s.safetyMargin, s.safetyMarginMin);
+      if (intersectionArea(mask, rect(b.x - mx, b.y - my, b.w + 2 * mx, b.h + 2 * my)) > 0) return o;
+    }
+    return null;
+  }
+
+  // Returns {masks: [{trackId, sourceBox, box, opacity}], skipped: [{track, reason, blocker?}]}
+  function evaluatePolicy(tracks, safetyObjects, now, safetyCfg, trackerCfg) {
+    const masks = [], skipped = [], cand = [];
+    for (const t of tracks) {
+      if (t.hits < trackerCfg.minHitsToConfirm) { skipped.push({ track: t, reason: SKIP.Unconfirmed }); continue; }
+      if (now - t.lastSeen > trackerCfg.maxAgeSeconds) { skipped.push({ track: t, reason: SKIP.Stale }); continue; }
+      const box = inset(t.box, safetyCfg.insetFraction);
+      if (area(box) <= 0 || area(box) > safetyCfg.maxSingleMaskArea) { skipped.push({ track: t, reason: SKIP.TooLarge }); continue; }
+      if (bottom(t.box) > safetyCfg.groundGuardY) { skipped.push({ track: t, reason: SKIP.GroundLevel }); continue; }
+      const blocker = overlapsSafety(box, safetyObjects, safetyCfg);
+      if (blocker) { skipped.push({ track: t, reason: SKIP.SafetyOverlap, blocker }); continue; }
+      cand.push({ t, box });
+    }
+    cand.sort((p, q) => q.t.score - p.t.score);
+    let used = 0;
+    for (const c of cand) {
+      if (used + area(c.box) > safetyCfg.maxTotalMaskArea) { skipped.push({ track: c.t, reason: SKIP.AreaBudget }); continue; }
+      used += area(c.box);
+      masks.push({ trackId: c.t.id, sourceBox: c.t.box, box: c.box, opacity: clamp01(safetyCfg.maxOpacity) });
+    }
+    return { masks, skipped };
+  }
+
+  // ---------- Motion guard (rotation only on phones) ----------
+  class MotionGuard {
+    constructor(cfg) { this.cfg = cfg; this.factor = 1; }
+    update(angularDegPerSec, dt) {
+      if (!Number.isFinite(angularDegPerSec) || dt <= 0) { this.factor = 0; return 0; }
+      const { angularSoftDegPerSec: soft, angularHardDegPerSec: hard } = this.cfg;
+      const target = angularDegPerSec <= soft ? 1 : angularDegPerSec >= hard ? 0 : 1 - (angularDegPerSec - soft) / (hard - soft);
+      this.factor = target < this.factor ? target : Math.min(target, this.factor + this.cfg.recoverPerSecond * dt);
+      return this.factor;
+    }
+  }
+
+  // ---------- Border colours (RGBA, top-down rows) ----------
+  function sampleEdges(px, w, h, box, ring) {
+    const gray = [0.5, 0.5, 0.5];
+    if (!px || px.length < w * h * 4) return { left: gray, right: gray, top: gray, bottom: gray };
+    const toPx = (v, n) => Math.min(n, Math.max(0, Math.round(v * n)));
+    let x0 = toPx(box.x, w), x1 = toPx(right(box), w), y0 = toPx(box.y, h), y1 = toPx(bottom(box), h);
+    if (x1 <= x0) x1 = Math.min(w, x0 + 1);
+    if (y1 <= y0) y1 = Math.min(h, y0 + 1);
+    const bx = Math.max(1, Math.round((x1 - x0) * ring)), by = Math.max(1, Math.round((y1 - y0) * ring));
+    const avg = (ax0, ax1, ay0, ay1) => {
+      ax0 = Math.max(0, ax0); ax1 = Math.min(w, ax1); ay0 = Math.max(0, ay0); ay1 = Math.min(h, ay1);
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let y = ay0; y < ay1; y++) for (let x = ax0, i = (y * w + ax0) * 4; x < ax1; x++, i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n++; }
+      return n ? [r / 255 / n, g / 255 / n, b / 255 / n] : gray;
+    };
+    const bandX = (o0, o1, i0, i1) => (o0 < 0 || o1 > w ? avg(i0, i1, y0, y1) : avg(o0, o1, y0, y1));
+    const bandY = (o0, o1, i0, i1) => (o0 < 0 || o1 > h ? avg(x0, x1, i0, i1) : avg(x0, x1, o0, o1));
+    return {
+      left: bandX(x0 - bx, x0, x0, x0 + bx),
+      right: bandX(x1, x1 + bx, x1 - bx, x1),
+      top: bandY(y0 - by, y0, y0, y0 + by),
+      bottom: bandY(y1, y1 + by, y1 - by, y1),
+    };
+  }
+
+  return { rect, iou, inset, intersectionArea, area, defaults, decode, AdTracker, evaluatePolicy, MotionGuard, sampleEdges, SKIP };
+});
+
+</script>
+<script>
+// ClearView web demo: photo / video / live camera -> YOLO-World (onnxruntime-web, in a worker)
+// -> same tracker + safety policy as the Quest app -> soft patches drawn on a canvas.
+(() => {
+  "use strict";
+  const C = window.ClearViewCore;
+  const ORT_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.wasm.min.js";
+  const ORT_GPU_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.webgpu.min.js";
+  const IN_W = 416, IN_H = 320, COL_W = 96, COL_H = 72, PATCH = 32;
+  const FADE_IN = 0.3, FADE_OUT = 0.1, FOLLOW = 10;
+
+  const LABEL_ES = {
+    billboard: "valla", "advertisement poster": "cartel", logo: "logo", "shop sign": "rótulo",
+    "advertising screen": "pantalla", person: "persona", bicycle: "bici", car: "coche", motorcycle: "moto",
+    bus: "autobús", truck: "camión", "traffic light": "semáforo", "stop sign": "stop", "traffic sign": "señal",
+  };
+  const REASON_ES = {
+    safetyOverlap: "toca a una persona, vehículo o señal",
+    tooLarge: "demasiado grande (está cerca)",
+    groundLevel: "a ras de suelo",
+    areaBudget: "límite de área tapada",
+    unconfirmed: "esperando confirmación",
+    stale: "ya no se ve",
+  };
+
+  // YOLO-World scores run lower than a trained YOLO: thresholds tuned on test photos.
+  const cfg = C.defaults();
+  cfg.decoder.adScoreThreshold = 0.25;
+  cfg.decoder.safetyScoreThreshold = 0.12;
+
+  const $ = (id) => document.getElementById(id);
+  const stage = $("stage");
+  const ctx = stage.getContext("2d");
+  const video = $("video");
+  const inCtx = mkCanvas(IN_W, IN_H).getContext("2d", { willReadFrequently: true });
+  const colCtx = mkCanvas(COL_W, COL_H).getContext("2d", { willReadFrequently: true });
+
+  let manifest = null, worker = null, ready = false, busy = false, reqId = 0, pending = null;
+  let mode = null, source = null, objectUrl = null, stream = null, isSample = false;
+  let tracker = new C.AdTracker(cfg.tracker);
+  const visuals = new Map();
+  let last = null, lastResultAt = -Infinity, avgMs = 0, dirty = true, prevTs = 0;
+  let showDebug = false, showOriginal = false;
+  // Kill switch (R11). Photo and video start on; live camera starts OFF so the user opts in.
+  let hidingOn = true, backend = "", wakeLock = null;
+  const motion = new C.MotionGuard(cfg.motion);
+  let rotRate = 0, hasMotion = false, motionFactor = 1;
+
+  function mkCanvas(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; }
+  const nowS = () => performance.now() / 1000;
+  const mb = (b) => (b / 1048576).toFixed(0);
+
+  // ---------------- status + notices ----------------
+  function setStatus(kind, text) {
+    const s = $("status");
+    s.dataset.kind = kind;
+    $("status-text").textContent = text;
+    $("stage-msg").hidden = kind === "ready";
+    $("stage-msg-text").textContent = text;
+  }
+  function notice(text) {
+    const n = $("notice");
+    n.textContent = text || "";
+    n.hidden = !text;
+  }
+
+  // ---------------- model ----------------
+  const WORKER_SRC = `
+    let session = null;
+    onmessage = async (e) => {
+      const m = e.data;
+      try {
+        if (m.type === "init") {
+          const gpu = m.gpuUrl && self.navigator && self.navigator.gpu;
+          importScripts(gpu ? m.gpuUrl : m.ortUrl);
+          ort.env.wasm.wasmPaths = m.wasmBase;
+          ort.env.wasm.numThreads = 1;
+          let backend = "wasm";
+          if (gpu) {
+            try {
+              session = await ort.InferenceSession.create(m.model, { executionProviders: ["webgpu"], graphOptimizationLevel: "all" });
+              // Warm-up run: some GPUs create the session but fail on the first inference.
+              const z = new ort.Tensor("float32", new Float32Array(3 * m.h * m.w), [1, 3, m.h, m.w]);
+              await session.run({ [session.inputNames[0]]: z });
+              backend = "webgpu";
+            } catch (err) {
+              session = null;
+            }
+          }
+          if (!session) session = await ort.InferenceSession.create(m.model, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+          postMessage({ type: "ready", backend });
+        } else if (m.type === "run") {
+          const t0 = performance.now();
+          const input = new ort.Tensor("float32", m.data, [1, 3, m.h, m.w]);
+          const out = await session.run({ [session.inputNames[0]]: input });
+          const o = out[session.outputNames[0]];
+          postMessage({ type: "result", id: m.id, data: o.data, dims: o.dims, ms: performance.now() - t0 }, [o.data.buffer]);
+        }
+      } catch (err) {
+        postMessage({ type: "error", message: String(err && err.message || err) });
+      }
+    };`;
+
+  async function loadModel() {
+    setStatus("loading", "Preparando el detector…");
+    const res = await fetch("model/manifest.json");
+    if (!res.ok) throw new Error("no se encontró model/manifest.json");
+    manifest = await res.json();
+    const total = manifest.bytes;
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const name of manifest.chunks) {
+      const r = await fetch("model/" + name);
+      if (!r.ok) throw new Error("no se pudo descargar " + name);
+      if (r.body && r.body.getReader) {
+        const reader = r.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf.set(value, off);
+          off += value.length;
+          setStatus("loading", `Descargando el detector · ${mb(off)} de ${mb(total)} MB`);
+        }
+      } else {
+        const b = new Uint8Array(await r.arrayBuffer());
+        buf.set(b, off);
+        off += b.length;
+      }
+    }
+    if (off !== total) throw new Error("descarga incompleta del modelo");
+    setStatus("loading", "Iniciando el detector…");
+    worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
+    worker.onmessage = onWorker;
+    worker.onerror = (e) => fail("El detector se detuvo: " + (e.message || "error desconocido"));
+    worker.postMessage({
+      type: "init", model: buf.buffer, ortUrl: ORT_URL, gpuUrl: manifest.webgpu ? ORT_GPU_URL : null,
+      wasmBase: new URL("ort/", location.href).href, w: IN_W, h: IN_H,
+    }, [buf.buffer]);
+  }
+
+  function onWorker(e) {
+    const m = e.data;
+    if (m.type === "ready") {
+      ready = true;
+      backend = m.backend === "webgpu" ? "GPU" : "CPU";
+      setStatus("ready", "Listo · " + backend);
+      dirty = true;
+    } else if (m.type === "result") {
+      if (pending && pending.id === m.id) onResult(m.data, m.dims, m.ms);
+    } else if (m.type === "error") {
+      fail("Error del detector: " + m.message);
+    }
+  }
+
+  function fail(text) {
+    ready = false;
+    busy = false;
+    visuals.clear(); // fail-open: never leave patches up
+    dirty = true;
+    setStatus("error", text);
+  }
+
+  // ---------------- detection ----------------
+  function sourceReady() {
+    if (!source) return false;
+    if (source instanceof HTMLVideoElement) return source.readyState >= 2 && source.videoWidth > 0;
+    return source.complete && source.naturalWidth > 0;
+  }
+
+  function maybeDetect() {
+    if (!ready || busy || !sourceReady() || !hidingOn || document.hidden) return;
+    if (mode === "video" && video.paused && last) return;
+    if (mode === "photo" && last && last.sourceToken === sourceToken) return;
+    busy = true;
+    inCtx.drawImage(source, 0, 0, IN_W, IN_H);
+    const px = inCtx.getImageData(0, 0, IN_W, IN_H).data;
+    const plane = IN_W * IN_H;
+    const f = new Float32Array(3 * plane);
+    for (let i = 0, p = 0; i < plane; i++, p += 4) {
+      f[i] = px[p] / 255;
+      f[i + plane] = px[p + 1] / 255;
+      f[i + 2 * plane] = px[p + 2] / 255;
+    }
+    colCtx.drawImage(source, 0, 0, COL_W, COL_H);
+    pending = { id: ++reqId, colors: colCtx.getImageData(0, 0, COL_W, COL_H).data, token: sourceToken };
+    worker.postMessage({ type: "run", id: pending.id, data: f, w: IN_W, h: IN_H }, [f.buffer]);
+  }
+
+  let sourceToken = 0;
+
+  function onResult(data, dims, ms) {
+    busy = false;
+    if (pending.token !== sourceToken) return; // source changed meanwhile
+    let dets;
+    try {
+      dets = C.decode(data, dims[1] - 4, dims[2], IN_W, IN_H, manifest.categories, cfg.decoder);
+    } catch (err) {
+      fail("Salida del modelo inesperada: " + err.message);
+      return;
+    }
+    const ads = dets.filter((d) => d.category === "ad");
+    const safety = dets.filter((d) => d.category === "safety");
+    const now = nowS();
+    if (mode === "photo") {
+      // A still photo has no "next frames": confirmation (R7) is skipped explicitly.
+      tracker.clear();
+      for (let i = 0; i < cfg.tracker.minHitsToConfirm; i++) tracker.update(ads, now);
+    } else {
+      tracker.update(ads, now);
+    }
+    const policy = C.evaluatePolicy(tracker.tracks, safety, now, cfg.safety, cfg.tracker);
+
+    const seen = new Set();
+    for (const m of policy.masks) {
+      seen.add(m.trackId);
+      const edges = C.sampleEdges(pending.colors, COL_W, COL_H, m.sourceBox, 0.15);
+      let v = visuals.get(m.trackId);
+      if (!v) {
+        v = { box: m.box, opacity: mode === "photo" ? m.opacity : 0 };
+        visuals.set(m.trackId, v);
+      }
+      if (mode === "photo") v.box = m.box;
+      v.target = m.box;
+      v.targetOpacity = m.opacity;
+      v.patch = makePatch(edges);
+    }
+    for (const [id, v] of visuals) if (!seen.has(id)) v.targetOpacity = 0;
+
+    last = { ads, safety, policy, sourceToken };
+    lastResultAt = now;
+    avgMs = avgMs ? avgMs * 0.7 + ms * 0.3 : ms;
+    dirty = true;
+    renderSummary();
+  }
+
+  // Same blend as Shaders/ClearViewSoftFill.shader: 4 edge colours, feathered alpha.
+  function makePatch(e) {
+    const c = mkCanvas(PATCH, PATCH);
+    const g = c.getContext("2d");
+    const im = g.createImageData(PATCH, PATCH);
+    const feather = 0.12;
+    const lerp = (a, b, t) => a + (b - a) * t;
+    for (let y = 0; y < PATCH; y++) {
+      for (let x = 0; x < PATCH; x++) {
+        const u = (x + 0.5) / PATCH, v = 1 - (y + 0.5) / PATCH;
+        const dh = Math.min(u, 1 - u), dv = Math.min(v, 1 - v);
+        const wH = dv / (dh + dv + 1e-5);
+        const edge = Math.min(dh, dv);
+        const t = Math.min(1, Math.max(0, edge / feather));
+        const a = t * t * (3 - 2 * t);
+        const i = (y * PATCH + x) * 4;
+        for (let k = 0; k < 3; k++) {
+          const horiz = lerp(e.left[k], e.right[k], u);
+          const vert = lerp(e.bottom[k], e.top[k], v);
+          im.data[i + k] = lerp(vert, horiz, wH) * 255;
+        }
+        im.data[i + 3] = a * 255;
+      }
+    }
+    g.putImageData(im, 0, 0);
+    return c;
+  }
+
+  // ---------------- rendering ----------------
+  function resizeStage() {
+    const w = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const h = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+    if (!w || !h) return;
+    const scale = Math.min(1, 1280 / Math.max(w, h));
+    const cw = Math.round(w * scale), ch = Math.round(h * scale);
+    if (stage.width !== cw || stage.height !== ch) { stage.width = cw; stage.height = ch; }
+  }
+
+  function render(dt) {
+    if (!sourceReady()) return;
+    resizeStage();
+    const W = stage.width, H = stage.height;
+    ctx.drawImage(source, 0, 0, W, H);
+
+    const now = nowS();
+    const timeout = Math.max(cfg.failSafe.resultTimeoutSeconds, (3 * avgMs) / 1000);
+    const healthy = ready && hidingOn && (mode === "photo" || now - lastResultAt <= timeout);
+    const gf = healthy ? (mode === "live" && hasMotion ? motionFactor : 1) : 0;
+    updateLiveState(healthy, gf);
+    const k = 1 - Math.exp(-FOLLOW * dt);
+
+    for (const [id, v] of visuals) {
+      if (mode !== "photo") {
+        const goal = v.targetOpacity * gf;
+        const secs = goal > v.opacity ? FADE_IN : FADE_OUT;
+        v.opacity = goal > v.opacity ? Math.min(goal, v.opacity + dt / secs) : Math.max(goal, v.opacity - dt / secs);
+        v.box = C.rect(v.box.x + (v.target.x - v.box.x) * k, v.box.y + (v.target.y - v.box.y) * k,
+          v.box.w + (v.target.w - v.box.w) * k, v.box.h + (v.target.h - v.box.h) * k);
+      } else if (!healthy) {
+        v.opacity = 0;
+      } else {
+        v.opacity = v.targetOpacity;
+      }
+      if (v.opacity <= 0.001 && v.targetOpacity === 0) { visuals.delete(id); continue; }
+      if (showOriginal || v.opacity <= 0.001) continue;
+      ctx.globalAlpha = v.opacity;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(v.patch, v.box.x * W, v.box.y * H, v.box.w * W, v.box.h * H);
+      ctx.globalAlpha = 1;
+    }
+    if (showDebug && !showOriginal && last) drawOverlay(W, H);
+  }
+
+  // Live overlay: always tells the user whether reality is being altered (R12).
+  let liveStateKey = "";
+  function updateLiveState(healthy, gf) {
+    if (mode !== "live") return;
+    let key, text;
+    if (!hidingOn) { key = "off"; text = "Desactivado: ves la cámara tal cual"; }
+    else if (!ready) { key = "wait"; text = "Preparando el detector…"; }
+    else if (!last) { key = "wait"; text = "Buscando publicidad…"; }
+    else if (!healthy) { key = "pause"; text = "En pausa: el detector no responde"; }
+    else if (gf < 0.5) { key = "pause"; text = "En pausa: giro rápido"; }
+    else { key = "on"; text = `Ocultando publicidad · ${last.policy.masks.length} ahora`; }
+    text += backend && avgMs ? ` · ${Math.round(avgMs)} ms ${backend}` : "";
+    if (key + text === liveStateKey) return;
+    liveStateKey = key + text;
+    const el = $("live-state");
+    el.dataset.kind = key;
+    el.textContent = text;
+  }
+
+  function drawOverlay(W, H) {
+    const lw = Math.max(2, W / 400), fs = Math.max(12, Math.round(W / 55));
+    ctx.font = `600 ${fs}px Archivo, system-ui, sans-serif`;
+    ctx.textBaseline = "top";
+    const label = (text, x, y, color) => {
+      const pad = fs * 0.3, tw = ctx.measureText(text).width;
+      const ly = Math.max(0, y - fs - pad * 2);
+      x = Math.max(0, Math.min(x, W - tw - pad * 2));
+      ctx.fillStyle = color;
+      ctx.fillRect(x, ly, tw + pad * 2, fs + pad * 2);
+      ctx.fillStyle = "#0d1014";
+      ctx.fillText(text, x + pad, ly + pad);
+    };
+    const box = (b, color, dash, text) => {
+      ctx.setLineDash(dash ? [lw * 3, lw * 2] : []);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lw;
+      ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
+      ctx.setLineDash([]);
+      if (text) label(text, b.x * W, b.y * H, color);
+    };
+    const css = getComputedStyle(document.documentElement);
+    const cHide = css.getPropertyValue("--hide").trim(), cSafe = css.getPropertyValue("--safe").trim(), cWarn = css.getPropertyValue("--warn").trim();
+    for (const s of last.safety) box(s.box, cSafe, false, LABEL_ES[manifest.classes[s.classId]] || "seguridad");
+    for (const sk of last.policy.skipped) {
+      if (sk.reason === "unconfirmed" || sk.reason === "stale") continue;
+      box(sk.track.box, cWarn, true, "visible: " + REASON_ES[sk.reason]);
+    }
+    for (const m of last.policy.masks) box(m.sourceBox, cHide, true, "oculto");
+  }
+
+  function loop(ts) {
+    const dt = prevTs ? Math.min(0.1, (ts - prevTs) / 1000) : 0.016;
+    prevTs = ts;
+    if (mode === "live" && hasMotion) motionFactor = motion.update(rotRate, dt);
+    maybeDetect();
+    if (mode !== "photo" || dirty) {
+      render(dt);
+      dirty = false;
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // ---------------- summary ----------------
+  function renderSummary() {
+    if (!last) return;
+    const hidden = last.policy.masks.length;
+    const kept = last.policy.skipped.filter((s) => s.reason !== "unconfirmed" && s.reason !== "stale");
+    $("sum-hidden").textContent = hidden;
+    $("sum-kept").textContent = kept.length;
+    $("sum-safe").textContent = last.safety.length;
+    $("sum-ms").textContent = Math.round(avgMs);
+
+    const reasons = {};
+    kept.forEach((s) => (reasons[s.reason] = (reasons[s.reason] || 0) + 1));
+    const ul = $("reasons");
+    ul.replaceChildren();
+    for (const [r, n] of Object.entries(reasons)) {
+      const li = document.createElement("li");
+      li.textContent = `${n} × ${REASON_ES[r]}`;
+      ul.appendChild(li);
+    }
+    const safeCounts = {};
+    last.safety.forEach((s) => {
+      const n = LABEL_ES[manifest.classes[s.classId]] || "otro";
+      safeCounts[n] = (safeCounts[n] || 0) + 1;
+    });
+    $("safe-list").textContent = Object.entries(safeCounts).map(([n, c]) => `${c} ${n}`).join(" · ") || "ninguno";
+    $("summary").hidden = false;
+  }
+
+  // ---------------- sources ----------------
+  function resetPipeline() {
+    sourceToken++;
+    tracker = new C.AdTracker(cfg.tracker);
+    visuals.clear();
+    last = null;
+    lastResultAt = -Infinity;
+    $("summary").hidden = true;
+    dirty = true;
+  }
+
+  function stopMedia() {
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    video.pause();
+    video.removeAttribute("src");
+    video.srcObject = null;
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+  }
+
+  async function requestWakeLock() {
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) { /* optional */ }
+  }
+
+  function setMode(m) {
+    mode = m;
+    document.body.dataset.mode = m;
+    document.body.classList.toggle("live", m === "live");
+    $("live-ui").hidden = m !== "live";
+    if (m === "live") { setHiding(false); requestWakeLock(); }
+    else {
+      hidingOn = true;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
+    $("speed-wrap").hidden = m !== "video";
+    $("credit").hidden = !isSample;
+  }
+
+  function usePhoto(src, sample) {
+    stopMedia();
+    resetPipeline();
+    isSample = !!sample;
+    const img = new Image();
+    img.onload = () => { source = img; setMode("photo"); dirty = true; };
+    img.onerror = () => notice("No se pudo abrir esa imagen.");
+    if (!sample) objectUrl = src;
+    img.src = src;
+    notice("");
+  }
+
+  function useVideoFile(file) {
+    stopMedia();
+    resetPipeline();
+    isSample = false;
+    objectUrl = URL.createObjectURL(file);
+    video.srcObject = null;
+    video.src = objectUrl;
+    video.loop = true;
+    video.playbackRate = parseFloat($("speed").value);
+    video.play().catch(() => notice("Toca la imagen para reproducir el vídeo."));
+    source = video;
+    setMode("video");
+    notice("");
+  }
+
+  async function useLive() {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } }, audio: false });
+      stopMedia();
+      resetPipeline();
+      isSample = false;
+      stream = s;
+      video.srcObject = s;
+      await video.play();
+      source = video;
+      setMode("live");
+      notice("");
+      enableMotion();
+    } catch (err) {
+      const inClaude = /claude\.ai|claudeusercontent|claude\.site/.test(location.hostname + document.referrer);
+      notice(inClaude
+        ? "Dentro de Claude la cámara en vivo está bloqueada. Abre la versión alojada de ClearView en Chrome para usarla."
+        : "No se pudo abrir la cámara. Revisa que el navegador tenga permiso de cámara para esta página y que se abra por https.");
+    }
+  }
+
+  async function enableMotion() {
+    hasMotion = false;
+    try {
+      if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+        if ((await DeviceMotionEvent.requestPermission()) !== "granted") throw new Error("denied");
+      }
+      window.addEventListener("devicemotion", (e) => {
+        const r = e.rotationRate;
+        if (!r || r.alpha == null) return;
+        hasMotion = true;
+        rotRate = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0);
+      });
+    } catch (_) { /* no sensor: rule R8 simply does not apply */ }
+    setTimeout(() => {
+      if (mode === "live" && !hasMotion) notice("Sin sensor de movimiento: la regla de «giro rápido» no se aplica en esta prueba.");
+    }, 1500);
+  }
+
+  // ---------------- UI wiring ----------------
+  $("in-photo").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) usePhoto(URL.createObjectURL(f), false);
+    e.target.value = "";
+  });
+  $("in-video").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) useVideoFile(f);
+    e.target.value = "";
+  });
+  $("btn-live").addEventListener("click", useLive);
+  $("btn-sample").addEventListener("click", () => usePhoto("sample.jpg", true));
+  $("debug").addEventListener("change", (e) => { showDebug = e.target.checked; dirty = true; });
+  $("speed").addEventListener("change", (e) => { video.playbackRate = parseFloat(e.target.value); });
+  stage.addEventListener("click", () => {
+    if (mode !== "video") return;
+    if (video.paused) video.play(); else video.pause();
+  });
+  const compare = $("btn-compare");
+  compare.addEventListener("click", () => {
+    showOriginal = !showOriginal;
+    compare.setAttribute("aria-pressed", String(showOriginal));
+    compare.textContent = showOriginal ? "Viendo el original · toca para volver" : "Ver el original";
+    dirty = true;
+  });
+
+  // Live controls
+  function setHiding(on) {
+    hidingOn = on;
+    const b = $("live-toggle");
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "Desactivar" : "Activar ClearView";
+    if (!on) { visuals.clear(); tracker.clear(); last = null; } // instant off, no fade
+    dirty = true;
+  }
+  $("live-toggle").addEventListener("click", () => setHiding(!hidingOn));
+  $("live-exit").addEventListener("click", () => usePhoto("sample.jpg", true));
+  $("live-debug").addEventListener("change", (e) => { showDebug = e.target.checked; $("debug").checked = showDebug; });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && mode === "live") requestWakeLock();
+  });
+
+  usePhoto("sample.jpg", true);
+  requestAnimationFrame(loop);
+  loadModel().catch((err) => fail("No se pudo cargar el detector: " + err.message));
+})();
+
+</script>
+</body></html>

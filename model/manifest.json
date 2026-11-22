@@ -1,0 +1,46 @@
+{
+  "input": [
+    1,
+    3,
+    320,
+    416
+  ],
+  "classes": [
+    "billboard",
+    "advertisement poster",
+    "logo",
+    "shop sign",
+    "advertising screen",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "bus",
+    "truck",
+    "traffic light",
+    "stop sign",
+    "traffic sign"
+  ],
+  "categories": [
+    "ad",
+    "ad",
+    "ad",
+    "ad",
+    "ad",
+    "safety",
+    "safety",
+    "safety",
+    "safety",
+    "safety",
+    "safety",
+    "safety",
+    "safety",
+    "safety"
+  ],
+  "chunks": [
+    "clearview-world.part0.wasm",
+    "clearview-world.part1.wasm"
+  ],
+  "bytes": 25091948,
+  "webgpu": true
+}
