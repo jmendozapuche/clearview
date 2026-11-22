@@ -41,6 +41,7 @@
     "clearview-world.part0.wasm",
     "clearview-world.part1.wasm"
   ],
-  "bytes": 25054885,
-  "webgpu": true
+  "bytes": 25092520,
+  "webgpu": true,
+  "version": "ffa24004484f"
 }
