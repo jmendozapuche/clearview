@@ -4,6 +4,7 @@
   "use strict";
   const C = window.ClearViewCore;
   const ORT_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.wasm.min.js";
+  const ORT_GPU_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.webgpu.min.js";
   const IN_W = 416, IN_H = 320, COL_W = 96, COL_H = 72, PATCH = 32;
   const FADE_IN = 0.3, FADE_OUT = 0.1, FOLLOW = 10;
 
@@ -39,6 +40,8 @@
   const visuals = new Map();
   let last = null, lastResultAt = -Infinity, avgMs = 0, dirty = true, prevTs = 0;
   let showDebug = false, showOriginal = false;
+  // Kill switch (R11). Photo and video start on; live camera starts OFF so the user opts in.
+  let hidingOn = true, backend = "", wakeLock = null;
   const motion = new C.MotionGuard(cfg.motion);
   let rotRate = 0, hasMotion = false, motionFactor = 1;
 
@@ -67,11 +70,24 @@
       const m = e.data;
       try {
         if (m.type === "init") {
-          importScripts(m.ortUrl);
+          const gpu = m.gpuUrl && self.navigator && self.navigator.gpu;
+          importScripts(gpu ? m.gpuUrl : m.ortUrl);
           ort.env.wasm.wasmPaths = m.wasmBase;
           ort.env.wasm.numThreads = 1;
-          session = await ort.InferenceSession.create(m.model, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
-          postMessage({ type: "ready" });
+          let backend = "wasm";
+          if (gpu) {
+            try {
+              session = await ort.InferenceSession.create(m.model, { executionProviders: ["webgpu"], graphOptimizationLevel: "all" });
+              // Warm-up run: some GPUs create the session but fail on the first inference.
+              const z = new ort.Tensor("float32", new Float32Array(3 * m.h * m.w), [1, 3, m.h, m.w]);
+              await session.run({ [session.inputNames[0]]: z });
+              backend = "webgpu";
+            } catch (err) {
+              session = null;
+            }
+          }
+          if (!session) session = await ort.InferenceSession.create(m.model, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+          postMessage({ type: "ready", backend });
         } else if (m.type === "run") {
           const t0 = performance.now();
           const input = new ort.Tensor("float32", m.data, [1, 3, m.h, m.w]);
@@ -115,14 +131,18 @@
     worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
     worker.onmessage = onWorker;
     worker.onerror = (e) => fail("El detector se detuvo: " + (e.message || "error desconocido"));
-    worker.postMessage({ type: "init", model: buf.buffer, ortUrl: ORT_URL, wasmBase: new URL("ort/", location.href).href }, [buf.buffer]);
+    worker.postMessage({
+      type: "init", model: buf.buffer, ortUrl: ORT_URL, gpuUrl: manifest.webgpu ? ORT_GPU_URL : null,
+      wasmBase: new URL("ort/", location.href).href, w: IN_W, h: IN_H,
+    }, [buf.buffer]);
   }
 
   function onWorker(e) {
     const m = e.data;
     if (m.type === "ready") {
       ready = true;
-      setStatus("ready", "Listo");
+      backend = m.backend === "webgpu" ? "GPU" : "CPU";
+      setStatus("ready", "Listo · " + backend);
       dirty = true;
     } else if (m.type === "result") {
       if (pending && pending.id === m.id) onResult(m.data, m.dims, m.ms);
@@ -147,7 +167,7 @@
   }
 
   function maybeDetect() {
-    if (!ready || busy || !sourceReady()) return;
+    if (!ready || busy || !sourceReady() || !hidingOn || document.hidden) return;
     if (mode === "video" && video.paused && last) return;
     if (mode === "photo" && last && last.sourceToken === sourceToken) return;
     busy = true;
@@ -258,8 +278,9 @@
 
     const now = nowS();
     const timeout = Math.max(cfg.failSafe.resultTimeoutSeconds, (3 * avgMs) / 1000);
-    const healthy = ready && (mode === "photo" || now - lastResultAt <= timeout);
+    const healthy = ready && hidingOn && (mode === "photo" || now - lastResultAt <= timeout);
     const gf = healthy ? (mode === "live" && hasMotion ? motionFactor : 1) : 0;
+    updateLiveState(healthy, gf);
     const k = 1 - Math.exp(-FOLLOW * dt);
 
     for (const [id, v] of visuals) {
@@ -271,6 +292,8 @@
           v.box.w + (v.target.w - v.box.w) * k, v.box.h + (v.target.h - v.box.h) * k);
       } else if (!healthy) {
         v.opacity = 0;
+      } else {
+        v.opacity = v.targetOpacity;
       }
       if (v.opacity <= 0.001 && v.targetOpacity === 0) { visuals.delete(id); continue; }
       if (showOriginal || v.opacity <= 0.001) continue;
@@ -280,7 +303,25 @@
       ctx.globalAlpha = 1;
     }
     if (showDebug && !showOriginal && last) drawOverlay(W, H);
-    $("paused").hidden = !(mode === "live" && hasMotion && motionFactor < 0.5);
+  }
+
+  // Live overlay: always tells the user whether reality is being altered (R12).
+  let liveStateKey = "";
+  function updateLiveState(healthy, gf) {
+    if (mode !== "live") return;
+    let key, text;
+    if (!hidingOn) { key = "off"; text = "Desactivado: ves la cámara tal cual"; }
+    else if (!ready) { key = "wait"; text = "Preparando el detector…"; }
+    else if (!last) { key = "wait"; text = "Buscando publicidad…"; }
+    else if (!healthy) { key = "pause"; text = "En pausa: el detector no responde"; }
+    else if (gf < 0.5) { key = "pause"; text = "En pausa: giro rápido"; }
+    else { key = "on"; text = `Ocultando publicidad · ${last.policy.masks.length} ahora`; }
+    text += backend && avgMs ? ` · ${Math.round(avgMs)} ms ${backend}` : "";
+    if (key + text === liveStateKey) return;
+    liveStateKey = key + text;
+    const el = $("live-state");
+    el.dataset.kind = key;
+    el.textContent = text;
   }
 
   function drawOverlay(W, H) {
@@ -373,9 +414,20 @@
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
   }
 
+  async function requestWakeLock() {
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) { /* optional */ }
+  }
+
   function setMode(m) {
     mode = m;
     document.body.dataset.mode = m;
+    document.body.classList.toggle("live", m === "live");
+    $("live-ui").hidden = m !== "live";
+    if (m === "live") { setHiding(false); requestWakeLock(); }
+    else {
+      hidingOn = true;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
     $("speed-wrap").hidden = m !== "video";
     $("credit").hidden = !isSample;
   }
@@ -421,7 +473,10 @@
       notice("");
       enableMotion();
     } catch (err) {
-      notice("La cámara en vivo no está disponible en esta página (el navegador o la página la bloquean). Usa «Foto» o «Vídeo»: en el móvil te dejan hacer la foto o grabar el vídeo en el momento.");
+      const inClaude = /claude\.ai|claudeusercontent|claude\.site/.test(location.hostname + document.referrer);
+      notice(inClaude
+        ? "Dentro de Claude la cámara en vivo está bloqueada. Abre la versión alojada de ClearView en Chrome para usarla."
+        : "No se pudo abrir la cámara. Revisa que el navegador tenga permiso de cámara para esta página y que se abra por https.");
     }
   }
 
@@ -463,11 +518,28 @@
     if (video.paused) video.play(); else video.pause();
   });
   const compare = $("btn-compare");
-  const setOrig = (v) => { showOriginal = v; compare.setAttribute("aria-pressed", String(v)); dirty = true; };
-  compare.addEventListener("pointerdown", (e) => { e.preventDefault(); setOrig(true); });
-  ["pointerup", "pointerleave", "pointercancel"].forEach((t) => compare.addEventListener(t, () => setOrig(false)));
-  compare.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") setOrig(true); });
-  compare.addEventListener("keyup", () => setOrig(false));
+  compare.addEventListener("click", () => {
+    showOriginal = !showOriginal;
+    compare.setAttribute("aria-pressed", String(showOriginal));
+    compare.textContent = showOriginal ? "Viendo el original · toca para volver" : "Ver el original";
+    dirty = true;
+  });
+
+  // Live controls
+  function setHiding(on) {
+    hidingOn = on;
+    const b = $("live-toggle");
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "Desactivar" : "Activar ClearView";
+    if (!on) { visuals.clear(); tracker.clear(); last = null; } // instant off, no fade
+    dirty = true;
+  }
+  $("live-toggle").addEventListener("click", () => setHiding(!hidingOn));
+  $("live-exit").addEventListener("click", () => usePhoto("sample.jpg", true));
+  $("live-debug").addEventListener("change", (e) => { showDebug = e.target.checked; $("debug").checked = showDebug; });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && mode === "live") requestWakeLock();
+  });
 
   usePhoto("sample.jpg", true);
   requestAnimationFrame(loop);
