@@ -72,6 +72,11 @@
         if (m.type === "init") {
           const gpu = m.gpuUrl && self.navigator && self.navigator.gpu;
           let gpuNote = !m.gpuUrl ? "" : !gpu ? "este navegador no ofrece WebGPU" : "";
+          // Chrome 131+ removed GPUAdapter.requestAdapterInfo() (now the adapter.info property);
+          // onnxruntime-web 1.18 still calls it, so restore it before the runtime starts.
+          if (gpu && self.GPUAdapter && !GPUAdapter.prototype.requestAdapterInfo) {
+            GPUAdapter.prototype.requestAdapterInfo = function () { return Promise.resolve(this.info || {}); };
+          }
           importScripts(gpu ? m.gpuUrl : m.ortUrl);
           ort.env.wasm.wasmPaths = m.wasmBase;
           ort.env.wasm.numThreads = 1;
