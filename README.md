@@ -37,10 +37,28 @@ unity/Assets/ClearView/
   Shaders/   ClearView/SoftFill: relleno de 4 colores con bordes suaves, compatible con stereo instanced.
 tests/       Tests xUnit del Core (dotnet test).
 ml/          Pipeline de datos, entrenamiento y exportación del detector (Ultralytics YOLO).
+web/         Demo para el móvil: mismo pipeline en el navegador (foto, vídeo o cámara en vivo).
 docs/        SAFETY.md (reglas) y SETUP_UNITY.md (montaje paso a paso).
 ```
 
-## Puesta en marcha
+## Probar en el móvil (sin visor)
+
+`web/` es una versión web que usa el mismo tracker y las mismas reglas de seguridad (portadas a
+JavaScript y testeadas contra los valores de C#). Haces una foto o grabas un vídeo con el móvil y la
+publicidad desaparece. Usa un detector sin entrenar (YOLO-World guiado por texto: "billboard",
+"advertisement poster"...) que corre entero en el navegador con onnxruntime-web.
+
+```bash
+python ml/scripts/export_world.py --out web/model   # genera el detector (fp16, en 2 trozos de 12 MB)
+python web/build.py                                  # empaqueta web/dist
+node --test web/test/core.test.js                    # tests del port a JS
+```
+
+La regla de distancia (2 m) no existe en el móvil: necesita el sensor de profundidad del Quest.
+La cámara en vivo solo funciona si `web/dist` se sirve por HTTPS desde tu propio dominio
+(GitHub Pages, por ejemplo); dentro de una página de Claude usa «Foto» o «Vídeo».
+
+## Puesta en marcha (Quest)
 
 1. **Prueba rápida sin entrenar** (las TV y los monitores hacen de "anuncio"):
    ```bash
@@ -89,6 +107,7 @@ anuncio que no se detecta es una molestia; una persona que no se detecta puede a
 ```bash
 dotnet test tests/ClearView.Core.Tests   # lógica de seguridad (C#)
 python -m pytest ml/tests                # pipeline de datos (Python)
+node --test web/test/core.test.js        # port a JS de la lógica de seguridad
 ```
 
 ## Estado y siguientes pasos
@@ -96,6 +115,7 @@ python -m pytest ml/tests                # pipeline de datos (Python)
 - [x] Pipeline completo: cámara → detección → seguridad → parches anclados al mundo
 - [x] Reglas de seguridad con tests
 - [x] Pipeline de datos y entrenamiento, con modo de prueba COCO
+- [x] Demo web para el móvil con detector sin entrenar (YOLO-World)
 - [ ] Compilar y probar en un Quest 3 real (las APIs de Meta e Inference Engine no se han compilado contra los paquetes reales)
 - [ ] Dataset propio de publicidad urbana capturado con el Quest
 - [ ] Evaluación offline de seguridad: % de personas o señales que acabarían tapadas, con vídeos grabados
