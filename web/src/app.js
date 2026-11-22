@@ -27,6 +27,9 @@
 
   // Thresholds come from the model manifest (YOLO-World needs lower ones than a trained model).
   const cfg = C.defaults();
+  // Web: an ad touching a person/vehicle/sign is still hidden, but they are cut out and stay in front.
+  cfg.safety.cutOutSafety = true;
+  let style = "panel"; // "panel" = blank billboard, "blend" = melt into the surrounding wall
 
   const $ = (id) => document.getElementById(id);
   const stage = $("stage");
@@ -101,8 +104,9 @@
           const t0 = performance.now();
           const input = new ort.Tensor("float32", m.data, [1, 3, m.h, m.w]);
           const out = await session.run({ [session.inputNames[0]]: input });
-          const o = out[session.outputNames[0]];
-          postMessage({ type: "result", id: m.id, data: o.data, dims: o.dims, ms: performance.now() - t0 }, [o.data.buffer]);
+          const outs = session.outputNames.map((n) => out[n]);
+          postMessage({ type: "result", id: m.id, outputs: outs.map((o) => ({ data: o.data, dims: o.dims })),
+                        ms: performance.now() - t0 }, outs.map((o) => o.data.buffer));
         }
       } catch (err) {
         postMessage({ type: "error", message: String(err && err.message || err) });
@@ -165,7 +169,7 @@
       setStatus("ready", "Listo · " + backend + (m.gpuNote ? " (" + m.gpuNote + ")" : ""));
       dirty = true;
     } else if (m.type === "result") {
-      if (pending && pending.id === m.id) onResult(m.data, m.dims, m.ms);
+      if (pending && pending.id === m.id) onResult(m.outputs, m.ms);
     } else if (m.type === "error") {
       fail("Error del detector: " + m.message);
     }
@@ -212,18 +216,47 @@
 
   let sourceToken = 0;
 
-  function onResult(data, dims, ms) {
+  // Input-normalized box -> source-normalized box, without clamping (for drawing masks).
+  const toSource = (b, lb) => C.rect((b.x * lb.inW - lb.dx) / lb.nw, (b.y * lb.inH - lb.dy) / lb.nh,
+    (b.w * lb.inW) / lb.nw, (b.h * lb.inH) / lb.nh);
+
+  // Mask probabilities -> white alpha canvas. `hard` gives a generous binary mask (safety cut-outs).
+  function maskCanvas(m, hard) {
+    const c = mkCanvas(m.w, m.h);
+    const g = c.getContext("2d");
+    const im = g.createImageData(m.w, m.h);
+    for (let i = 0; i < m.data.length; i++) {
+      const p = m.data[i];
+      const a = hard ? (p > 0.3 ? 1 : 0) : Math.min(1, Math.max(0, (p - 0.35) / 0.3));
+      im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = 255;
+      im.data[i * 4 + 3] = a * 255;
+    }
+    g.putImageData(im, 0, 0);
+    return c;
+  }
+
+  function onResult(outputs, ms) {
     busy = false;
     if (pending.token !== sourceToken) return; // source changed meanwhile
+    const det = outputs[0];
+    const proto = outputs.length > 1 && outputs[1].dims.length === 4 ? outputs[1] : null;
+    const nm = proto ? proto.dims[1] : 0;
+    const nc = det.dims[1] - 4 - nm;
+    const lb = pending.lb;
     let dets;
     try {
-      dets = C.decode(data, dims[1] - 4, dims[2], IN_W, IN_H, manifest.categories, cfg.decoder)
-        .map((d) => ({ ...d, box: C.unletterbox(d.box, pending.lb) }))
+      dets = C.decode(det.data, nc, det.dims[2], IN_W, IN_H, manifest.categories, cfg.decoder)
+        .map((d) => ({ ...d, inBox: d.box, box: C.unletterbox(d.box, lb) }))
         .filter((d) => C.area(d.box) > 0);
     } catch (err) {
       fail("Salida del modelo inesperada: " + err.message);
       return;
     }
+    const maskOf = (d, hard) => {
+      if (!proto) return null;
+      const m = C.maskFor({ box: d.inBox, anchor: d.anchor }, det.data, nc, det.dims[2], proto.data, proto.dims[3], proto.dims[2]);
+      return { canvas: maskCanvas(m, hard), box: toSource(m.box, lb) };
+    };
     const ads = dets.filter((d) => d.category === "ad");
     const safety = dets.filter((d) => d.category === "safety");
     const now = nowS();
@@ -248,7 +281,14 @@
       if (mode === "photo") v.box = m.box;
       v.target = m.box;
       v.targetOpacity = m.opacity;
-      v.patch = makePatch(edges);
+      v.edges = edges;
+      v.patch = makeStylePatch(edges);
+      // Exact shape of the ad (segmentation models): the detection that best matches this track.
+      let best = null, bestIou = 0.3;
+      for (const a of ads) { const i = C.iou(a.box, m.sourceBox); if (i > bestIou) { bestIou = i; best = a; } }
+      if (best) v.adMask = maskOf(best, false);
+      // People, vehicles and signs touching the ad stay in front of the panel.
+      v.cutouts = (m.cutouts || []).map((o) => ({ box: C.guardRect(o.box, cfg.safety), mask: maskOf(o, true) }));
     }
     for (const [id, v] of visuals) if (!seen.has(id)) v.targetOpacity = 0;
 
@@ -257,6 +297,29 @@
     avgMs = avgMs ? avgMs * 0.7 + ms * 0.3 : ms;
     dirty = true;
     renderSummary();
+  }
+
+  const makeStylePatch = (e) => (style === "panel" ? makePanelPatch(e) : makePatch(e));
+
+  // Blank billboard: matte light-grey panel lit like its surroundings, soft top-to-bottom gradient, thin frame.
+  function makePanelPatch(e) {
+    const c = mkCanvas(PATCH, PATCH);
+    const g = c.getContext("2d");
+    const im = g.createImageData(PATCH, PATCH);
+    const lum = ["left", "right", "top", "bottom"]
+      .reduce((s, k) => s + 0.299 * e[k][0] + 0.587 * e[k][1] + 0.114 * e[k][2], 0) / 4;
+    const base = [196, 197, 194].map((v) => v * (0.55 + 0.6 * lum));
+    for (let y = 0; y < PATCH; y++) {
+      for (let x = 0; x < PATCH; x++) {
+        const grad = 1.06 - (0.12 * y) / (PATCH - 1);
+        const frame = Math.min(x, y, PATCH - 1 - x, PATCH - 1 - y) < 1 ? 0.72 : 1;
+        const i = (y * PATCH + x) * 4;
+        for (let k = 0; k < 3; k++) im.data[i + k] = Math.min(255, base[k] * grad * frame);
+        im.data[i + 3] = 255;
+      }
+    }
+    g.putImageData(im, 0, 0);
+    return c;
   }
 
   // Same blend as Shaders/ClearViewSoftFill.shader: 4 edge colours, feathered alpha.
@@ -288,6 +351,28 @@
   }
 
   // ---------------- rendering ----------------
+  const layer = mkCanvas(1, 1), lctx = layer.getContext("2d");
+  const tmp = mkCanvas(1, 1), tctx = tmp.getContext("2d");
+
+  // One ad: style patch, clipped to the ad's exact shape when the model gives masks.
+  function drawVisual(v, W, H) {
+    const bx = v.box.x * W, by = v.box.y * H;
+    const bw = Math.ceil(v.box.w * W), bh = Math.ceil(v.box.h * H);
+    if (bw < 1 || bh < 1) return;
+    tmp.width = bw;
+    tmp.height = bh;
+    tctx.imageSmoothingEnabled = true;
+    tctx.drawImage(v.patch, 0, 0, bw, bh);
+    if (v.adMask) {
+      const mb = v.adMask.box;
+      tctx.globalCompositeOperation = "destination-in";
+      tctx.drawImage(v.adMask.canvas, mb.x * W - bx, mb.y * H - by, mb.w * W, mb.h * H);
+      tctx.globalCompositeOperation = "source-over";
+    }
+    lctx.globalAlpha = v.opacity;
+    lctx.drawImage(tmp, bx, by);
+    lctx.globalAlpha = 1;
+  }
   function resizeStage() {
     const w = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
     const h = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
@@ -309,6 +394,9 @@
     const gf = healthy ? (mode === "live" && hasMotion ? motionFactor : 1) : 0;
     updateLiveState(healthy, gf);
     const k = 1 - Math.exp(-FOLLOW * dt);
+    if (layer.width !== W || layer.height !== H) { layer.width = W; layer.height = H; }
+    lctx.clearRect(0, 0, W, H);
+    const shown = [];
 
     for (const [id, v] of visuals) {
       if (mode !== "photo") {
@@ -324,10 +412,27 @@
       }
       if (v.opacity <= 0.001 && v.targetOpacity === 0) { visuals.delete(id); continue; }
       if (showOriginal || v.opacity <= 0.001) continue;
-      ctx.globalAlpha = v.opacity;
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(v.patch, v.box.x * W, v.box.y * H, v.box.w * W, v.box.h * H);
-      ctx.globalAlpha = 1;
+      drawVisual(v, W, H);
+      shown.push(v);
+    }
+    if (shown.length) {
+      // Safety cut-outs: punch every protected object (grown by the margin) out of ALL panels.
+      lctx.globalCompositeOperation = "destination-out";
+      lctx.fillStyle = "#000";
+      for (const v of shown) {
+        for (const c of v.cutouts || []) {
+          if (c.mask) {
+            const b = c.mask.box, d = Math.max(3, W * 0.008);
+            for (const [ox, oy] of [[0, 0], [d, 0], [-d, 0], [0, d], [0, -d]]) {
+              lctx.drawImage(c.mask.canvas, b.x * W + ox - b.w * W * 0.06, b.y * H + oy - b.h * H * 0.04, b.w * W * 1.12, b.h * H * 1.08);
+            }
+          } else {
+            lctx.fillRect(c.box.x * W, c.box.y * H, c.box.w * W, c.box.h * H);
+          }
+        }
+      }
+      lctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(layer, 0, 0);
     }
     if (showDebug && !showOriginal && last) drawOverlay(W, H);
   }
@@ -408,6 +513,12 @@
     kept.forEach((s) => (reasons[s.reason] = (reasons[s.reason] || 0) + 1));
     const ul = $("reasons");
     ul.replaceChildren();
+    const withCut = last.policy.masks.filter((m) => m.cutouts && m.cutouts.length).length;
+    if (withCut) {
+      const li = document.createElement("li");
+      li.textContent = `${withCut} con personas o vehículos delante: se recortan y siguen visibles`;
+      ul.appendChild(li);
+    }
     for (const [r, n] of Object.entries(reasons)) {
       const li = document.createElement("li");
       li.textContent = `${n} × ${REASON_ES[r]}`;
@@ -425,6 +536,9 @@
   // ---------------- sources ----------------
   function resetPipeline() {
     sourceToken++;
+    // Forget the previous image right away: until the new one has loaded, nothing may be analysed,
+    // otherwise the old frame's results would be applied to the new one.
+    source = null;
     tracker = new C.AdTracker(cfg.tracker);
     visuals.clear();
     last = null;
@@ -539,6 +653,11 @@
   $("btn-live").addEventListener("click", useLive);
   $("btn-sample").addEventListener("click", () => usePhoto("sample.jpg", true));
   $("debug").addEventListener("change", (e) => { showDebug = e.target.checked; dirty = true; });
+  $("style").addEventListener("change", (e) => {
+    style = e.target.value;
+    for (const v of visuals.values()) if (v.edges) v.patch = makeStylePatch(v.edges);
+    dirty = true;
+  });
   $("speed").addEventListener("change", (e) => { video.playbackRate = parseFloat(e.target.value); });
   stage.addEventListener("click", () => {
     if (mode !== "video") return;

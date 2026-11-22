@@ -181,6 +181,8 @@
   <div class="tools">
     <button class="chip" id="btn-compare" type="button" aria-pressed="false">Ver el original</button>
     <label class="chip" for="debug"><input type="checkbox" id="debug"> Ver detecciones</label>
+    <label class="chip" for="style">Estilo
+      <select id="style"><option value="panel" selected>Panel en blanco</option><option value="blend">Fundir con la pared</option></select></label>
     <span id="speed-wrap" hidden><label class="chip" for="speed">Velocidad
       <select id="speed"><option value="1">1×</option><option value="0.5" selected>0,5×</option><option value="0.25">0,25×</option></select></label></span>
     <button class="chip" id="btn-sample" type="button">Volver al ejemplo</button>
@@ -205,7 +207,7 @@
     <details>
       <summary>Reglas de seguridad en esta prueba</summary>
       <ol>
-        <li><b>Nunca tapa personas, vehículos ni señales.</b> Si el parche las toca, aunque sea con un margen, el anuncio se queda visible.</li>
+        <li><b>Nunca tapa personas, vehículos ni señales.</b> Si están delante de un anuncio, se recortan del panel con un margen y siguen a la vista.</li>
         <li><b>Solo el interior del anuncio.</b> El marco y el poste se siguen viendo.</li>
         <li><b>Nada enorme ni a ras de suelo.</b> Un anuncio que ocupa mucho suele estar cerca; uno abajo puede ser un obstáculo.</li>
         <li><b>Nunca opaco del todo</b> (90 %): si algo se clasifica mal, se intuye detrás.</li>

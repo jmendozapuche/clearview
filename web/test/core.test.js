@@ -111,3 +111,26 @@ test("letterbox is the identity when aspect ratios match", () => {
   const b = C.unletterbox(C.rect(0.25, 0.5, 0.1, 0.2), lb);
   assert.ok(Math.abs(b.x - 0.25) < 1e-6 && Math.abs(b.h - 0.2) < 1e-6);
 });
+
+test("cutOutSafety hides the ad but lists the person to keep in front", () => {
+  const s = { ...cfg.safety, cutOutSafety: true };
+  const r = evalP([track(1, C.rect(0.3, 0.2, 0.3, 0.3))], [person(C.rect(0.55, 0.1, 0.1, 0.6))], s);
+  assert.equal(r.masks.length, 1);
+  assert.equal(r.masks[0].cutouts.length, 1);
+  // without the flag the old rule (leave the ad visible) still applies
+  assert.equal(evalP([track(1, C.rect(0.3, 0.2, 0.3, 0.3))], [person(C.rect(0.55, 0.1, 0.1, 0.6))]).masks.length, 0);
+});
+
+test("maskFor decodes prototype masks cropped to the box", () => {
+  // 1 class, 2 anchors, 2 mask coefficients; protos 4x4.
+  const N = 2, nc = 1, nm = 2, pw = 4, ph = 4;
+  const out = new Float32Array((4 + nc + nm) * N);
+  out[(4 + nc + 0) * N + 1] = 10;   // anchor 1 uses prototype 0 strongly
+  out[(4 + nc + 1) * N + 1] = 0;
+  const protos = new Float32Array(nm * pw * ph);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) protos[y * 4 + x] = x < 2 ? 1 : -1; // proto 0: left half on
+  const det = { box: C.rect(0, 0, 1, 0.5), anchor: 1 };
+  const m = C.maskFor(det, out, nc, N, protos, pw, ph);
+  assert.equal(m.w, 4); assert.equal(m.h, 2);
+  assert.ok(m.data[0] > 0.99 && m.data[3] < 0.01);
+});

@@ -78,7 +78,7 @@
       const w = output[2 * numAnchors + a] / inputW, h = output[3 * numAnchors + a] / inputH;
       const box = clampToUnit(rect(cx - w / 2, cy - h / 2, w, h));
       if (area(box) <= 0) continue;
-      cand.push({ box, classId: best, score: bestScore, category: cat });
+      cand.push({ box, classId: best, score: bestScore, category: cat, anchor: a });
     }
     cand.sort((p, q) => q.score - p.score);
     const kept = [];
@@ -127,18 +127,20 @@
     TooLarge: "tooLarge", GroundLevel: "groundLevel", AreaBudget: "areaBudget",
   };
 
-  function overlapsSafety(mask, safetyObjects, s) {
-    for (const o of safetyObjects) {
-      if (o.category !== "safety") continue;
-      const b = o.box;
-      const mx = Math.max(b.w * s.safetyMargin, s.safetyMarginMin);
-      const my = Math.max(b.h * s.safetyMargin, s.safetyMarginMin);
-      if (intersectionArea(mask, rect(b.x - mx, b.y - my, b.w + 2 * mx, b.h + 2 * my)) > 0) return o;
-    }
-    return null;
+  // Safety box grown by the safety margin (relative, with an absolute minimum for small, distant objects).
+  function guardRect(b, s) {
+    const mx = Math.max(b.w * s.safetyMargin, s.safetyMarginMin);
+    const my = Math.max(b.h * s.safetyMargin, s.safetyMarginMin);
+    return rect(b.x - mx, b.y - my, b.w + 2 * mx, b.h + 2 * my);
   }
 
-  // Returns {masks: [{trackId, sourceBox, box, opacity}], skipped: [{track, reason, blocker?}]}
+  function safetyOverlaps(mask, safetyObjects, s) {
+    return safetyObjects.filter((o) => o.category === "safety" && intersectionArea(mask, guardRect(o.box, s)) > 0);
+  }
+
+  // Returns {masks: [{trackId, sourceBox, box, opacity, cutouts}], skipped: [{track, reason, blocker?}]}
+  // With safetyCfg.cutOutSafety, an ad touching a person/vehicle/sign is still hidden, but the renderer
+  // MUST leave every object in `cutouts` (grown by the safety margin) visible in front of the panel.
   function evaluatePolicy(tracks, safetyObjects, now, safetyCfg, trackerCfg) {
     const masks = [], skipped = [], cand = [];
     for (const t of tracks) {
@@ -147,18 +149,45 @@
       const box = inset(t.box, safetyCfg.insetFraction);
       if (area(box) <= 0 || area(box) > safetyCfg.maxSingleMaskArea) { skipped.push({ track: t, reason: SKIP.TooLarge }); continue; }
       if (bottom(t.box) > safetyCfg.groundGuardY) { skipped.push({ track: t, reason: SKIP.GroundLevel }); continue; }
-      const blocker = overlapsSafety(box, safetyObjects, safetyCfg);
-      if (blocker) { skipped.push({ track: t, reason: SKIP.SafetyOverlap, blocker }); continue; }
-      cand.push({ t, box });
+      const blockers = safetyOverlaps(box, safetyObjects, safetyCfg);
+      if (blockers.length && !safetyCfg.cutOutSafety) {
+        skipped.push({ track: t, reason: SKIP.SafetyOverlap, blocker: blockers[0] });
+        continue;
+      }
+      cand.push({ t, box, cutouts: blockers });
     }
     cand.sort((p, q) => q.t.score - p.t.score);
     let used = 0;
     for (const c of cand) {
       if (used + area(c.box) > safetyCfg.maxTotalMaskArea) { skipped.push({ track: c.t, reason: SKIP.AreaBudget }); continue; }
       used += area(c.box);
-      masks.push({ trackId: c.t.id, sourceBox: c.t.box, box: c.box, opacity: clamp01(safetyCfg.maxOpacity) });
+      masks.push({ trackId: c.t.id, sourceBox: c.t.box, box: c.box, opacity: clamp01(safetyCfg.maxOpacity), cutouts: c.cutouts });
     }
     return { masks, skipped };
+  }
+
+  // ---------- Segmentation masks (YOLO-seg: output0 has 32 mask coefficients after the class scores) ----------
+  // Returns {data: Float32Array (0..1), w, h, box} where box is the detection box in INPUT-normalized coords,
+  // data covers exactly that box at prototype resolution, values are the mask probability.
+  function maskFor(det, output, numClasses, numAnchors, protos, protoW, protoH) {
+    const nm = protos.length / (protoW * protoH);
+    const coef = new Float32Array(nm);
+    for (let k = 0; k < nm; k++) coef[k] = output[(4 + numClasses + k) * numAnchors + det.anchor];
+    const b = det.box;
+    const x0 = Math.max(0, Math.floor(b.x * protoW)), x1 = Math.min(protoW, Math.ceil((b.x + b.w) * protoW));
+    const y0 = Math.max(0, Math.floor(b.y * protoH)), y1 = Math.min(protoH, Math.ceil((b.y + b.h) * protoH));
+    const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+    const data = new Float32Array(w * h);
+    const plane = protoW * protoH;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = (y0 + y) * protoW + (x0 + x);
+        let v = 0;
+        for (let k = 0; k < nm; k++) v += coef[k] * protos[k * plane + p];
+        data[y * w + x] = 1 / (1 + Math.exp(-v));
+      }
+    }
+    return { data, w, h, box: rect(x0 / protoW, y0 / protoH, w / protoW, h / protoH) };
   }
 
   // ---------- Motion guard (rotation only on phones) ----------
@@ -198,5 +227,5 @@
     };
   }
 
-  return { rect, iou, inset, intersectionArea, area, defaults, letterbox, unletterbox, decode, AdTracker, evaluatePolicy, MotionGuard, sampleEdges, SKIP };
+  return { rect, iou, inset, intersectionArea, area, defaults, letterbox, unletterbox, decode, maskFor, guardRect, AdTracker, evaluatePolicy, MotionGuard, sampleEdges, SKIP };
 });
