@@ -5,13 +5,16 @@
   const C = window.ClearViewCore;
   const ORT_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.wasm.min.js";
   const ORT_GPU_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.webgpu.min.js";
-  const IN_W = 416, IN_H = 320, COL_W = 96, COL_H = 72, PATCH = 32;
+  const COL_W = 96, COL_H = 72, PATCH = 32;
+  let IN_W = 416, IN_H = 320; // replaced by the model manifest
   const FADE_IN = 0.3, FADE_OUT = 0.1, FOLLOW = 10;
 
   const LABEL_ES = {
     billboard: "valla", "advertisement poster": "cartel", logo: "logo", "shop sign": "rótulo",
     "advertising screen": "pantalla", person: "persona", bicycle: "bici", car: "coche", motorcycle: "moto",
     bus: "autobús", truck: "camión", "traffic light": "semáforo", "stop sign": "stop", "traffic sign": "señal",
+    poster: "cartel", wheelchair: "silla de ruedas", traffic_light: "semáforo", stop_sign: "stop",
+    traffic_sign: "señal", ad_screen: "pantalla",
   };
   const REASON_ES = {
     safetyOverlap: "toca a una persona, vehículo o señal",
@@ -22,16 +25,15 @@
     stale: "ya no se ve",
   };
 
-  // YOLO-World scores run lower than a trained YOLO: thresholds tuned on test photos.
+  // Thresholds come from the model manifest (YOLO-World needs lower ones than a trained model).
   const cfg = C.defaults();
-  cfg.decoder.adScoreThreshold = 0.25;
-  cfg.decoder.safetyScoreThreshold = 0.12;
 
   const $ = (id) => document.getElementById(id);
   const stage = $("stage");
   const ctx = stage.getContext("2d");
   const video = $("video");
-  const inCtx = mkCanvas(IN_W, IN_H).getContext("2d", { willReadFrequently: true });
+  const inCanvas = mkCanvas(IN_W, IN_H);
+  const inCtx = inCanvas.getContext("2d", { willReadFrequently: true });
   const colCtx = mkCanvas(COL_W, COL_H).getContext("2d", { willReadFrequently: true });
 
   let manifest = null, worker = null, ready = false, busy = false, reqId = 0, pending = null;
@@ -112,6 +114,17 @@
     const res = await fetch("model/manifest.json", { cache: "no-store" });
     if (!res.ok) throw new Error("no se encontró model/manifest.json");
     manifest = await res.json();
+    IN_H = manifest.input[2];
+    IN_W = manifest.input[3];
+    inCanvas.width = IN_W;
+    inCanvas.height = IN_H;
+    const th = manifest.thresholds || { ad: 0.25, safety: 0.12 }; // older YOLO-World manifests
+    cfg.decoder.adScoreThreshold = th.ad;
+    cfg.decoder.safetyScoreThreshold = th.safety;
+    const note = $("model-note");
+    if (note && manifest.name === "clearview-trained") {
+      note.textContent = "Detector entrenado para ClearView (YOLO11n) con vallas, carteles y logos. Puede fallar con logos poco comunes o muy pequeños. Todo se procesa en tu móvil: las imágenes no salen del dispositivo.";
+    }
     const total = manifest.bytes;
     const buf = new Uint8Array(total);
     let off = 0;
@@ -178,7 +191,12 @@
     if (mode === "video" && video.paused && last) return;
     if (mode === "photo" && last && last.sourceToken === sourceToken) return;
     busy = true;
-    inCtx.drawImage(source, 0, 0, IN_W, IN_H);
+    const srcW = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const srcH = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+    const lb = C.letterbox(srcW, srcH, IN_W, IN_H);
+    inCtx.fillStyle = "rgb(114,114,114)"; // Ultralytics' letterbox padding colour
+    inCtx.fillRect(0, 0, IN_W, IN_H);
+    inCtx.drawImage(source, lb.dx, lb.dy, lb.nw, lb.nh);
     const px = inCtx.getImageData(0, 0, IN_W, IN_H).data;
     const plane = IN_W * IN_H;
     const f = new Float32Array(3 * plane);
@@ -188,7 +206,7 @@
       f[i + 2 * plane] = px[p + 2] / 255;
     }
     colCtx.drawImage(source, 0, 0, COL_W, COL_H);
-    pending = { id: ++reqId, colors: colCtx.getImageData(0, 0, COL_W, COL_H).data, token: sourceToken };
+    pending = { id: ++reqId, colors: colCtx.getImageData(0, 0, COL_W, COL_H).data, token: sourceToken, lb };
     worker.postMessage({ type: "run", id: pending.id, data: f, w: IN_W, h: IN_H }, [f.buffer]);
   }
 
@@ -199,7 +217,9 @@
     if (pending.token !== sourceToken) return; // source changed meanwhile
     let dets;
     try {
-      dets = C.decode(data, dims[1] - 4, dims[2], IN_W, IN_H, manifest.categories, cfg.decoder);
+      dets = C.decode(data, dims[1] - 4, dims[2], IN_W, IN_H, manifest.categories, cfg.decoder)
+        .map((d) => ({ ...d, box: C.unletterbox(d.box, pending.lb) }))
+        .filter((d) => C.area(d.box) > 0);
     } catch (err) {
       fail("Salida del modelo inesperada: " + err.message);
       return;

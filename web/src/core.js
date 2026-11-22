@@ -31,6 +31,21 @@
   }
   const lerpRect = (a, b, t) => rect(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.w + (b.w - a.w) * t, a.h + (b.h - a.h) * t);
 
+  // ---------- Letterbox: fit the frame into the model input without distortion ----------
+  // YOLO models are trained on letterboxed images; stretching a portrait camera frame into a
+  // landscape input (or vice versa) degrades detections.
+  function letterbox(srcW, srcH, inW, inH) {
+    const scale = Math.min(inW / srcW, inH / srcH);
+    const nw = Math.round(srcW * scale), nh = Math.round(srcH * scale);
+    return { scale, nw, nh, dx: Math.floor((inW - nw) / 2), dy: Math.floor((inH - nh) / 2), inW, inH, srcW, srcH };
+  }
+  // Box normalized to the model input -> box normalized to the source frame (clamped).
+  function unletterbox(box, lb) {
+    const x0 = (box.x * lb.inW - lb.dx) / lb.nw, y0 = (box.y * lb.inH - lb.dy) / lb.nh;
+    const x1 = ((box.x + box.w) * lb.inW - lb.dx) / lb.nw, y1 = ((box.y + box.h) * lb.inH - lb.dy) / lb.nh;
+    return clampToUnit(rect(x0, y0, x1 - x0, y1 - y0));
+  }
+
   // ---------- Configs (same defaults as C#) ----------
   const defaults = () => ({
     decoder: { adScoreThreshold: 0.45, safetyScoreThreshold: 0.2, nmsIoU: 0.45, maxDetections: 100 },
@@ -183,5 +198,5 @@
     };
   }
 
-  return { rect, iou, inset, intersectionArea, area, defaults, decode, AdTracker, evaluatePolicy, MotionGuard, sampleEdges, SKIP };
+  return { rect, iou, inset, intersectionArea, area, defaults, letterbox, unletterbox, decode, AdTracker, evaluatePolicy, MotionGuard, sampleEdges, SKIP };
 });

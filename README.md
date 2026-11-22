@@ -70,43 +70,50 @@ La cámara en vivo solo funciona si `web/dist` se sirve por HTTPS desde tu propi
 
 ## Entrenar el detector
 
-No existe un dataset público de "publicidad urbana" listo para usar, así que se combinan varios:
+La forma más sencilla es el cuaderno de Google Colab, que usa una GPU gratuita y hace todo el proceso:
 
-| Qué aporta | Fuentes sugeridas (revisa su licencia) |
-|------------|----------------------------------------|
-| Personas, vehículos, semáforos | COCO |
-| Logos | LogoDet-3K, OpenLogo, FlickrLogos-32 |
-| Vallas, carteles, pantallas | Datasets de vallas publicitarias en Roboflow Universe y, sobre todo, **tus propias capturas del Quest** etiquetadas |
-| Señales de tráfico | GTSDB, Mapillary Traffic Signs |
+**[Abrir en Colab](https://colab.research.google.com/github/jmendozapuche/clearview/blob/ccr-3d807d19-g1sbwv/ml/colab/ClearView_entrenar.ipynb)**
+(`ml/colab/ClearView_entrenar.ipynb`)
+
+| Datos | De dónde | Cuenta |
+|-------|----------|--------|
+| Vallas, carteles, personas, vehículos, sillas de ruedas, semáforos, señales | Open Images V7 (`fetch_openimages.py`) | No |
+| Logos | LogoDet-3K en Kaggle, un dataset de Roboflow o un zip propio (`voc_to_yolo.py`, `normalize_yolo.py`) | Kaggle o Roboflow |
+| Personas y vehículos que faltan en esas fotos | Autoetiquetado con YOLO11x (`pseudo_label_safety.py`) | No |
+
+Los mismos pasos a mano, en un equipo con GPU:
 
 ```bash
-cp ml/configs/datasets.example.yaml ml/configs/datasets.yaml   # edita las rutas de cada fuente
-
-# 1. Etiqueta personas y vehículos en los datasets de anuncios (ahí no vienen etiquetados)
+python ml/scripts/fetch_openimages.py --split train --out raw/openimages
+python ml/scripts/voc_to_yolo.py --src raw/LogoDet-3K --out raw/logos --single-class logo --max-images 8000
 python ml/scripts/pseudo_label_safety.py --source raw/logos
-python ml/scripts/pseudo_label_safety.py --source raw/street_ads
-
-# 2. Une todo en un dataset con las clases de ClearView
-python ml/scripts/prepare_dataset.py --config ml/configs/datasets.yaml
-
-# 3. Entrena (necesita GPU)
-python ml/scripts/train.py --data datasets/clearview/data.yaml --epochs 100
-
-# 4. Exporta a ONNX y copia el modelo y las etiquetas a Unity
-python ml/scripts/export.py --weights runs/clearview/train/weights/best.pt --config ml/configs/datasets.yaml
+python ml/scripts/pseudo_label_safety.py --source raw/openimages
+python ml/scripts/prepare_dataset.py --config ml/configs/colab.yaml
+python ml/scripts/train.py --data datasets/clearview/data.yaml --batch -1 --device 0 --resume
+python ml/scripts/eval_safety.py --weights runs/clearview/train/weights/best.pt \
+    --data datasets/clearview/data.yaml --config ml/configs/colab.yaml
+python ml/scripts/export.py --weights runs/clearview/train/weights/best.pt --config ml/configs/colab.yaml \
+    --web web/model-trained                       # y además el .onnx para Unity
+python web/build.py --model web/model-trained     # web con el modelo entrenado
 ```
 
-**Por qué hace falta el paso 1:** si mezclas un dataset de logos donde salen personas sin etiquetar,
-el modelo aprende que "persona" es fondo y detecta peor justo lo que nunca hay que tapar.
+**Por qué el autoetiquetado:** los datasets de logos no marcan a las personas de sus fotos, y Open Images
+tampoco las marca todas. Sin completarlas, el modelo aprendería que una persona es "fondo" y detectaría peor
+justo lo que nunca hay que tapar.
 
-**Qué métrica mirar:** más que el mAP de los anuncios, el **recall de las clases de seguridad**. Un
-anuncio que no se detecta es una molestia; una persona que no se detecta puede acabar tapada.
+**Qué métrica mirar:** `eval_safety.py` destaca el **recall de las clases de seguridad**. Un anuncio que no
+se detecta es una molestia; una persona que no se detecta puede acabar tapada.
+
+**Personas impresas en anuncios:** en Open Images, el 51 % de las personas en fotos de vallas y carteles
+son fotos o dibujos dentro del anuncio. Por defecto cuentan como personas, así que ClearView deja esos
+anuncios visibles. `--drop-safety-depictions` enseña al modelo a distinguirlas; úsalo solo si después
+`eval_safety.py` confirma que la detección de personas reales sigue alta.
 
 ## Tests
 
 ```bash
 dotnet test tests/ClearView.Core.Tests   # lógica de seguridad (C#)
-python -m pytest ml/tests                # pipeline de datos (Python)
+python -m pytest ml/tests                # pipeline de datos y exportación (Python)
 node --test web/test/core.test.js        # port a JS de la lógica de seguridad
 ```
 

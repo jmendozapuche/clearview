@@ -93,3 +93,21 @@ test("defaults match the C# SafetyConfig", () => {
   assert.equal(cfg.safety.groundGuardY, val("GroundGuardY"));
   assert.equal(cfg.safety.maxOpacity, val("MaxOpacity"));
 });
+
+test("letterbox fits portrait frame into landscape input and maps boxes back", () => {
+  const lb = C.letterbox(1080, 1920, 416, 320);
+  assert.equal(lb.nh, 320);
+  assert.equal(lb.nw, 180);
+  assert.equal(lb.dx, 118);
+  // a box covering exactly the image area in the input maps back to the whole frame
+  const full = C.unletterbox(C.rect(lb.dx / 416, 0, lb.nw / 416, 1), lb);
+  assert.ok(Math.abs(full.x) < 1e-6 && Math.abs(full.w - 1) < 1e-6 && Math.abs(full.h - 1) < 1e-6);
+  // a box in the padding collapses to nothing after clamping
+  assert.equal(C.area(C.unletterbox(C.rect(0, 0, 0.1, 0.1), lb)), 0);
+});
+
+test("letterbox is the identity when aspect ratios match", () => {
+  const lb = C.letterbox(832, 640, 416, 320);
+  const b = C.unletterbox(C.rect(0.25, 0.5, 0.1, 0.2), lb);
+  assert.ok(Math.abs(b.x - 0.25) < 1e-6 && Math.abs(b.h - 0.2) < 1e-6);
+});

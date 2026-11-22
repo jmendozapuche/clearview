@@ -13,20 +13,29 @@ def main() -> None:
     ap.add_argument("--model", default="yolo11n.pt", help="starting weights (COCO-pretrained n/s recommended)")
     ap.add_argument("--imgsz", type=int, default=416, help="training size; export uses 320x416")
     ap.add_argument("--epochs", type=int, default=100)
-    ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--batch", type=float, default=32, help="-1 = let Ultralytics pick for the GPU")
     ap.add_argument("--device", default=None, help="e.g. 0 for the first GPU, or cpu")
     ap.add_argument("--project", default="runs/clearview")
     ap.add_argument("--name", default="train")
+    ap.add_argument("--resume", action="store_true", help="continue <project>/<name>/weights/last.pt if it exists")
     args = ap.parse_args()
+
+    from pathlib import Path
 
     from ultralytics import YOLO
 
+    last = Path(args.project) / args.name / "weights" / "last.pt"
+    if args.resume and last.exists():
+        print(f"Resuming from {last}")
+        YOLO(str(last)).train(resume=True)
+        return
     model = YOLO(args.model)
     model.train(
         data=args.data,
         imgsz=args.imgsz,
         epochs=args.epochs,
-        batch=args.batch,
+        batch=int(args.batch) if args.batch >= 1 or args.batch == -1 else args.batch,
+        exist_ok=True,
         device=args.device,
         project=args.project,
         name=args.name,

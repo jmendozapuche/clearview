@@ -71,6 +71,7 @@ def prepare(cfg: dict, root: Path, copy: bool = False) -> dict:
     val_fraction = float(cfg.get("val_fraction", 0.1))
     rng = random.Random(cfg.get("seed", 0))
     stats = {"images": 0, "boxes": [0] * len(classes), "skipped_empty": 0}
+    n_seen = 0
 
     for split in ("train", "val"):
         for kind in ("images", "labels"):
@@ -81,6 +82,9 @@ def prepare(cfg: dict, root: Path, copy: bool = False) -> dict:
 
     for src in cfg.get("sources", []):
         src_root = root / src["path"]
+        if src.get("optional") and not (src_root / "images").is_dir():
+            print(f"(optional source {src['name']!r} not found at {src_root}, skipped)")
+            continue
         id_map = build_mapping(read_source_names(src, root), src.get("map") or {}, target_index)
         keep_empty = bool(src.get("keep_images_without_boxes", False))
         max_images = src.get("max_images")
@@ -95,7 +99,9 @@ def prepare(cfg: dict, root: Path, copy: bool = False) -> dict:
             if not remapped and not keep_empty:
                 stats["skipped_empty"] += 1
                 continue
-            split = "val" if rng.random() < val_fraction else "train"
+            # Exact share instead of a coin flip per image: small sources never end up with an empty val set.
+            n_seen += 1
+            split = "val" if int(n_seen * val_fraction) > int((n_seen - 1) * val_fraction) else "train"
             stem = f"{src['name']}__" + "__".join(rel.with_suffix("").parts)
             place(img, out_dir / "images" / split / (stem + img.suffix.lower()), copy)
             (out_dir / "labels" / split / (stem + ".txt")).write_text(

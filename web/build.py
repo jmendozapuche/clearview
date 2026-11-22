@@ -47,9 +47,11 @@ def main() -> None:
     ap.add_argument("--standalone", action="store_true",
                     help="wrap the page in its own <!doctype html> skeleton (Claude artifacts add one themselves)")
     ap.add_argument("--out", default=str(WEB / "dist"))
+    ap.add_argument("--model", default=str(WEB / "model"),
+                    help="model package folder (export_world.py --out, or export.py --web)")
     args = ap.parse_args()
     out = Path(args.out)
-    model_dir = WEB / "model"
+    model_dir = Path(args.model)
     manifest = json.loads((model_dir / "manifest.json").read_text())
     if out.exists():
         shutil.rmtree(out)

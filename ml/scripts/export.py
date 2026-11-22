@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from clearview_ml import class_defs, load_config, unity_labels_text  # noqa: E402
+from web_package import package_for_web  # noqa: E402
 
 
 # Used only by --coco-smoke-test.
@@ -53,6 +54,11 @@ def main() -> None:
     ap.add_argument("--height", type=int, default=320)
     ap.add_argument("--width", type=int, default=416, help="416x320 ~ the 4:3 passthrough camera aspect")
     ap.add_argument("--opset", type=int, default=15)
+    ap.add_argument("--web", help="also write the web-demo package (manifest + chunks) to this folder")
+    ap.add_argument("--web-height", type=int, default=416, help="web input height (portrait: phones are held upright)")
+    ap.add_argument("--web-width", type=int, default=320)
+    ap.add_argument("--ad-threshold", type=float, default=0.45)
+    ap.add_argument("--safety-threshold", type=float, default=0.20)
     args = ap.parse_args()
 
     from ultralytics import YOLO
@@ -90,6 +96,16 @@ def main() -> None:
     (dest / "clearview_labels.txt").write_text(labels_text, encoding="utf-8")
     print(f"Copied model and labels to {dest}")
     print(f"In Unity set ClearViewController: inputWidth={args.width}, inputHeight={args.height}")
+
+    if args.web:
+        if args.coco_smoke_test:
+            raise SystemExit("--web is for trained ClearView models (use export_world.py for a no-training web model)")
+        web_onnx = Path(model.export(format="onnx", imgsz=(args.web_height, args.web_width), opset=args.opset,
+                                     simplify=True, dynamic=False, half=False, nms=False))
+        defs = class_defs(cfg)
+        package_for_web(web_onnx, [c.name for c in defs], [c.category for c in defs], Path(args.web),
+                        (args.web_height, args.web_width),
+                        {"ad": args.ad_threshold, "safety": args.safety_threshold}, name="clearview-trained")
 
 
 if __name__ == "__main__":

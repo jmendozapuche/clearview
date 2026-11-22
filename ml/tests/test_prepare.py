@@ -90,3 +90,98 @@ def test_unity_labels_format_matches_csharp_parser():
 def test_example_config_is_valid():
     from clearview_ml import load_config
     load_config(ML / "configs" / "datasets.example.yaml")
+
+
+# ---------- voc_to_yolo ----------
+from voc_to_yolo import convert  # noqa: E402
+
+VOC = """<annotation><filename>{f}</filename><size><width>200</width><height>100</height><depth>3</depth></size>
+<object><name>{n}</name><bndbox><xmin>20</xmin><ymin>10</ymin><xmax>60</xmax><ymax>50</ymax></bndbox></object>
+<object><name>{n}</name><bndbox><xmin>150</xmin><ymin>0</ymin><xmax>260</xmax><ymax>40</ymax></bndbox></object>
+</annotation>"""
+
+
+def test_voc_to_yolo_single_class_and_clipping(tmp_path):
+    for brand in ("Dell", "Puma"):
+        d = tmp_path / "src" / "Electronic" / brand
+        d.mkdir(parents=True)
+        (d / "1.jpg").write_bytes(b"x")
+        (d / "1.xml").write_text(VOC.format(f="1.jpg", n=brand))
+    (tmp_path / "src" / "orphan.xml").write_text(VOC.format(f="missing.jpg", n="X"))
+    s = convert(tmp_path / "src", tmp_path / "out", "logo", None)
+    assert s["images"] == 2 and s["skipped"] == 1 and s["names"] == ["logo"]
+    lbl = (tmp_path / "out" / "labels" / "all" / "Electronic__Dell__1.txt").read_text().split("\n")
+    assert lbl[0] == "0 0.200000 0.300000 0.200000 0.400000"
+    # second box is clipped to the image: x 150..200
+    assert lbl[1].startswith("0 0.875000 0.200000 0.250000 0.400000")
+
+
+def test_voc_to_yolo_keeps_names_without_single_class(tmp_path):
+    d = tmp_path / "src"
+    d.mkdir()
+    (d / "a.jpg").write_bytes(b"x")
+    (d / "a.xml").write_text(VOC.format(f="a.jpg", n="Nike"))
+    s = convert(d, tmp_path / "out", None, None)
+    assert s["names"] == ["Nike"]
+
+
+# ---------- pseudo_label_safety ----------
+from pseudo_label_safety import merge_boxes  # noqa: E402
+
+
+def test_merge_boxes_skips_duplicates_keeps_new():
+    existing = ["2 0.5 0.5 0.2 0.4"]
+    found = [(2, [0.51, 0.5, 0.2, 0.4]), (2, [0.1, 0.1, 0.05, 0.1]), (3, [0.5, 0.5, 0.2, 0.4])]
+    added = merge_boxes(existing, found, {})
+    assert len(added) == 2                       # duplicate person dropped
+    assert added[0].startswith("2 0.100000")     # far person kept
+    assert added[1].startswith("3 ")             # other class at the same spot kept
+
+
+def test_optional_missing_source_is_skipped(tmp_path):
+    make_source(tmp_path, "coco", {"a": "0 0.5 0.5 0.2 0.2\n"}, ["person"])
+    cfg = {"output": "out", "val_fraction": 0.0, "classes": CLASSES,
+           "sources": [{"name": "coco", "path": "coco", "map": {"person": "person"}},
+                       {"name": "mine", "path": "nope", "optional": True, "map": {}}]}
+    assert prepare(cfg, tmp_path, copy=True)["images"] == 1
+
+
+def test_colab_config_is_valid():
+    from clearview_ml import load_config
+    load_config(ML / "configs" / "colab.yaml")
+
+
+def test_val_split_is_exact(tmp_path):
+    make_source(tmp_path, "s", {f"i{i}": "0 0.5 0.5 0.2 0.2\n" for i in range(20)}, ["person"])
+    cfg = {"output": "out", "val_fraction": 0.1, "classes": CLASSES,
+           "sources": [{"name": "s", "path": "s", "map": {"person": "person"}}]}
+    prepare(cfg, tmp_path, copy=True)
+    assert len(list((tmp_path / "out" / "images" / "val").iterdir())) == 2
+    assert len(list((tmp_path / "out" / "images" / "train").iterdir())) == 18
+
+
+# ---------- normalize_yolo ----------
+from normalize_yolo import normalize  # noqa: E402
+
+
+def test_normalize_roboflow_layout_single_class(tmp_path):
+    src = tmp_path / "rf"
+    for split in ("train", "valid"):
+        (src / split / "images").mkdir(parents=True)
+        (src / split / "labels").mkdir(parents=True)
+        (src / split / "images" / "a.jpg").write_bytes(b"x")
+        (src / split / "labels" / "a.txt").write_text("3 0.5 0.5 0.1 0.1\n1 0.1 0.1 0.1 0.1 0.2 0.2\n")
+    (src / "data.yaml").write_text("names: [nike, puma, dell, apple]\n")
+    s = normalize(src, tmp_path / "out", "logo")
+    assert s == {"images": 2, "boxes": 2, "names": ["logo"]}
+    assert (tmp_path / "out" / "labels" / "all" / "train__images__a.txt").read_text() == "0 0.5 0.5 0.1 0.1\n"
+
+
+def test_normalize_keeps_names(tmp_path):
+    src = tmp_path / "rf"
+    (src / "images").mkdir(parents=True)
+    (src / "labels").mkdir(parents=True)
+    (src / "images" / "b.png").write_bytes(b"x")
+    (src / "labels" / "b.txt").write_text("1 0.5 0.5 0.1 0.1\n")
+    (src / "data.yaml").write_text("names: {0: billboard, 1: person}\n")
+    assert normalize(src, tmp_path / "out", None)["names"] == ["billboard", "person"]

@@ -1,0 +1,42 @@
+# Dataset recipe used by ml/colab/ClearView_entrenar.ipynb (paths relative to the repo root).
+output: datasets/clearview
+val_fraction: 0.08
+seed: 0
+
+classes:
+  - { name: billboard,     category: ad }
+  - { name: poster,        category: ad }
+  - { name: logo,          category: ad }
+  - { name: person,        category: safety }
+  - { name: wheelchair,    category: safety }
+  - { name: bicycle,       category: safety }
+  - { name: car,           category: safety }
+  - { name: motorcycle,    category: safety }
+  - { name: bus,           category: safety }
+  - { name: truck,         category: safety }
+  - { name: traffic_light, category: safety }
+  - { name: stop_sign,     category: safety }
+  - { name: traffic_sign,  category: safety }
+
+sources:
+  # fetch_openimages.py: billboards, posters and every safety class, boxes drawn by people.
+  - name: openimages
+    path: raw/openimages
+    map: { billboard: billboard, poster: poster, person: person, wheelchair: wheelchair, bicycle: bicycle,
+           car: car, motorcycle: motorcycle, bus: bus, truck: truck, traffic_light: traffic_light,
+           stop_sign: stop_sign, traffic_sign: traffic_sign }
+
+  # voc_to_yolo.py --single-class logo, then pseudo_label_safety.py (adds people and vehicles).
+  - name: logos
+    path: raw/logos
+    optional: true
+    map: { logo: logo, person: person, bicycle: bicycle, car: car, motorcycle: motorcycle, bus: bus,
+           truck: truck, traffic light: traffic_light, stop sign: stop_sign }
+
+  # Your own photos, labelled in YOLO format with these same class names (optional).
+  - name: mine
+    path: raw/mine
+    optional: true
+    map: { billboard: billboard, poster: poster, logo: logo, person: person, wheelchair: wheelchair,
+           bicycle: bicycle, car: car, motorcycle: motorcycle, bus: bus, truck: truck,
+           traffic_light: traffic_light, stop_sign: stop_sign, traffic_sign: traffic_sign }
